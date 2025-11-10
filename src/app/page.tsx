@@ -1,65 +1,153 @@
-import Image from "next/image";
+"use client";
+
+import dynamic from "next/dynamic";
+import { useCallback, useState } from "react";
+import {
+  Scanner as ScannerComp,
+  centerText,
+  IDetectedBarcode,
+} from "@yudiel/react-qr-scanner";
+import { toast } from "sonner";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from "@/components/ui/dialog";
+import { UnscrambleGame } from "@/components/UnscrambleGame";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+
+const Map = dynamic(() => import("@/components/Map"), { ssr: false });
 
 export default function Home() {
+  const [initialWord, setInitialWord] = useState("TCAH");
+  const [answerWord, setAnswerWord] = useState("CHAT");
+  const [submitted, setSubmitted] = useState({
+    initial: "TCAH",
+    answer: "CHAT",
+  });
+
+  const handleScan = useCallback((detectedCodes: IDetectedBarcode[]) => {
+    const code = detectedCodes[0]?.rawValue;
+    if (!code) return toast.error("Missing Code!");
+    console.log("Scanned:", code);
+    const splitCode = code.split("_");
+    if (splitCode[0] != "zocampbanfoo") {
+      return toast.error("Invalid Code!");
+    }
+    return toast.success(splitCode[1]);
+  }, []);
+
+  const handleError = useCallback((error: unknown) => {
+    if (error instanceof Error) {
+      console.error("Scanner error:", error.message);
+      toast.error(`Scanner error: ${error.message}`);
+    } else {
+      console.error("Unknown scanner error:", error);
+      toast.error(`Unknown scanner error:: ${error}`);
+    }
+  }, []);
+
   return (
-    <div className="flex min-h-screen items-center justify-center bg-zinc-50 font-sans dark:bg-black">
-      <main className="flex min-h-screen w-full max-w-3xl flex-col items-center justify-between py-32 px-16 bg-white dark:bg-black sm:items-start">
-        <Image
-          className="dark:invert"
-          src="/next.svg"
-          alt="Next.js logo"
-          width={100}
-          height={20}
-          priority
+    <div>
+      <div className="relative">
+        <Map />
+      </div>
+      <Dialog>
+        <DialogTrigger>Open</DialogTrigger>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Are you absolutely sure?</DialogTitle>
+            <DialogDescription>
+              This action cannot be undone. This will permanently delete your
+              account and remove your data from our servers.
+            </DialogDescription>
+          </DialogHeader>
+        </DialogContent>
+      </Dialog>
+      <div className="w-4/5 mx-auto aspect-square max-w-3xl">
+        <ScannerComp
+          formats={[
+            "qr_code",
+            "micro_qr_code",
+            "rm_qr_code",
+            "maxi_code",
+            "pdf417",
+            "aztec",
+            "data_matrix",
+            "matrix_codes",
+            "dx_film_edge",
+            "databar",
+            "databar_expanded",
+            "codabar",
+            "code_39",
+            "code_93",
+            "code_128",
+            "ean_8",
+            "ean_13",
+            "itf",
+            "linear_codes",
+            "upc_a",
+            "upc_e",
+          ]}
+          onScan={handleScan}
+          onError={handleError}
+          components={{
+            onOff: false,
+            torch: true,
+            zoom: true,
+            finder: true,
+            tracker: centerText,
+          }}
+          allowMultiple={false}
+          scanDelay={0}
         />
-        <div className="flex flex-col items-center gap-6 text-center sm:items-start sm:text-left">
-          <h1 className="max-w-xs text-3xl font-semibold leading-10 tracking-tight text-black dark:text-zinc-50">
-            To get started, edit the page.tsx file.
-          </h1>
-          <p className="max-w-md text-lg leading-8 text-zinc-600 dark:text-zinc-400">
-            Looking for a starting point or more instructions? Head over to{" "}
-            <a
-              href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
+      </div>
+      <div className="min-h-dvh w-full p-6 flex flex-col gap-6">
+        <Card className="w-full max-w-xl mx-auto">
+          <CardHeader>
+            <CardTitle>Setup</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div className="space-y-1">
+                <label className="text-sm font-medium">
+                  Initial (scrambled) word
+                </label>
+                <Input
+                  value={initialWord}
+                  onChange={(e) => setInitialWord(e.target.value)}
+                  placeholder="e.g. TCAH"
+                />
+              </div>
+              <div className="space-y-1">
+                <label className="text-sm font-medium">Correct word</label>
+                <Input
+                  value={answerWord}
+                  onChange={(e) => setAnswerWord(e.target.value)}
+                  placeholder="e.g. CHAT"
+                />
+              </div>
+            </div>
+            <Button
+              onClick={() =>
+                setSubmitted({ initial: initialWord, answer: answerWord })
+              }
             >
-              Templates
-            </a>{" "}
-            or the{" "}
-            <a
-              href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Learning
-            </a>{" "}
-            center.
-          </p>
-        </div>
-        <div className="flex flex-col gap-4 text-base font-medium sm:flex-row">
-          <a
-            className="flex h-12 w-full items-center justify-center gap-2 rounded-full bg-foreground px-5 text-background transition-colors hover:bg-[#383838] dark:hover:bg-[#ccc] md:w-[158px]"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <Image
-              className="dark:invert"
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={16}
-              height={16}
-            />
-            Deploy Now
-          </a>
-          <a
-            className="flex h-12 w-full items-center justify-center rounded-full border border-solid border-black/[.08] px-5 transition-colors hover:border-transparent hover:bg-black/[.04] dark:border-white/[.145] dark:hover:bg-[#1a1a1a] md:w-[158px]"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Documentation
-          </a>
-        </div>
-      </main>
+              Start / Update Puzzle
+            </Button>
+          </CardContent>
+        </Card>
+
+        <UnscrambleGame
+          initialWord={submitted.initial}
+          answerWord={submitted.answer}
+        />
+      </div>
     </div>
   );
 }
