@@ -2,7 +2,6 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import dynamic from "next/dynamic";
-import "leaflet/dist/leaflet.css";
 
 // Dynamically import react-leaflet (SSR off)
 const MapContainer = dynamic(
