@@ -33,6 +33,26 @@ export default function RootLayout({
           integrity="sha256-sA+zWATbFveLLNqWO2gtiw3BTmPTTn6F2jCs4f2vJVc="
           crossOrigin=""
         />
+        <link
+          rel="preconnect"
+          href="https://a.basemaps.cartocdn.com"
+          crossOrigin=""
+        />
+        <link
+          rel="preconnect"
+          href="https://b.basemaps.cartocdn.com"
+          crossOrigin=""
+        />
+        <link
+          rel="preconnect"
+          href="https://c.basemaps.cartocdn.com"
+          crossOrigin=""
+        />
+        <link
+          rel="preconnect"
+          href="https://d.basemaps.cartocdn.com"
+          crossOrigin=""
+        />
       </Head>
       <body
         className={`${geistSans.variable} ${geistMono.variable} antialiased`}

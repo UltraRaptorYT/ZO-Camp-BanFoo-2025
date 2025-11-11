@@ -18,7 +18,9 @@ export function UnscrambleGame({
   answerWord = "CHAT",
 }: UnscrambleGameProps) {
   const normalizedInitial = useMemo(() => initialWord.trim(), [initialWord]);
-  const normalizedAnswer = useMemo(() => answerWord.trim(), [answerWord]);
+  const normalizedAnswer = useMemo(() => answerWord.trim(), [answerWord]); // add refs:
+  const lastXRef = useRef<number | null>(null);
+  const lastYRef = useRef<number | null>(null);
 
   const [tiles, setTiles] = useState<Tile[]>(
     normalizedInitial
@@ -72,21 +74,30 @@ export function UnscrambleGame({
   }
 
   function onPointerDown(e: React.PointerEvent, idx: number) {
+    e.preventDefault();
     (e.target as HTMLElement).setPointerCapture(e.pointerId);
     setDragIndex(idx);
     setDragId(e.pointerId);
     setDragX(0);
     setDragY(0);
+    lastXRef.current = e.clientX;
+    lastYRef.current = e.clientY;
   }
 
   function onPointerMove(e: React.PointerEvent) {
-    if (dragIndex === null || dragId === null) return;
-    if (e.pointerId !== dragId) return;
+    if (dragIndex === null || dragId === null || e.pointerId !== dragId) return;
 
-    setDragX((prev) => prev + e.movementX);
-    setDragY((prev) => prev + e.movementY);
+    // ✅ compute deltas manually (Safari mobile fix)
+    const lastX = lastXRef.current ?? e.clientX;
+    const lastY = lastYRef.current ?? e.clientY;
+    const dx = e.clientX - lastX;
+    const dy = e.clientY - lastY;
+    lastXRef.current = e.clientX;
+    lastYRef.current = e.clientY;
 
-    // As we drag across another tile, perform a live swap for snappy UX
+    setDragX((prev) => prev + dx);
+    setDragY((prev) => prev + dy);
+
     const overIdx = indexFromPoint(e.clientX, e.clientY);
     if (overIdx !== null && overIdx !== dragIndex) {
       const from = dragIndex;
@@ -100,14 +111,14 @@ export function UnscrambleGame({
     if (dragId !== null) {
       try {
         (e.target as HTMLElement).releasePointerCapture(dragId);
-      } catch {
-        // no-op: sometimes releasePointerCapture throws if not captured
-      }
+      } catch {}
     }
     setDragIndex(null);
     setDragId(null);
     setDragX(0);
     setDragY(0);
+    lastXRef.current = null;
+    lastYRef.current = null;
   }
 
   function shuffle() {
@@ -162,38 +173,35 @@ export function UnscrambleGame({
 
         <div
           ref={containerRef}
-          className="flex flex-wrap gap-2 p-3 rounded-2xl bg-muted/60 min-h-[80px] select-none"
+          className="flex flex-wrap gap-2 p-3 rounded-2xl bg-muted/60 min-h-20 select-none touch-none"
         >
-          {tiles.map((t, idx) => {
-            const active = dragIndex === idx;
-            return (
-              <div
-                key={t.id}
-                ref={setTileRef(t.id)}
-                data-idx={idx}
-                onPointerDown={(e) => onPointerDown(e, idx)}
-                onPointerMove={onPointerMove}
-                onPointerUp={onPointerUp}
-                onPointerCancel={onPointerUp}
-                className={clsx(
-                  "relative cursor-grab active:cursor-grabbing",
-                  "rounded-xl border bg-background shadow-sm",
-                  "px-4 py-3 text-xl font-semibold tracking-wide",
-                  "transition-transform will-change-transform"
-                )}
-                style={
-                  active
-                    ? {
-                        transform: `translate3d(${dragX}px, ${dragY}px, 0) scale(1.05)`,
-                        zIndex: 50,
-                      }
-                    : undefined
-                }
-              >
-                {t.ch}
-              </div>
-            );
-          })}
+          {tiles.map((t, idx) => (
+            <div
+              key={t.id}
+              data-idx={idx}
+              onPointerDown={(e) => onPointerDown(e, idx)}
+              onPointerMove={onPointerMove}
+              onPointerUp={onPointerUp}
+              onPointerCancel={onPointerUp}
+              className={clsx(
+                "relative cursor-grab active:cursor-grabbing",
+                "rounded-xl border bg-background shadow-sm",
+                "px-4 py-3 text-xl font-semibold tracking-wide",
+                "transition-transform will-change-transform",
+                "touch-none" // optional extra
+              )}
+              style={
+                dragIndex === idx
+                  ? {
+                      transform: `translate3d(${dragX}px, ${dragY}px, 0) scale(1.05)`,
+                      zIndex: 50,
+                    }
+                  : undefined
+              }
+            >
+              {t.ch}
+            </div>
+          ))}
         </div>
 
         <div className="text-sm text-muted-foreground">

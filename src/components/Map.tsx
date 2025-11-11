@@ -168,18 +168,25 @@ export default function UserMap() {
   );
 
   return (
-    <div style={{ height: "70vh", width: "100%", position: "relative" }}>
+    <div style={{ height: "100%", width: "100%", position: "relative" }}>
       <MapContainer
         center={initialCenter as any}
-        zoom={50}
+        zoom={10}
         style={{ height: "100%", width: "100%" }}
-        scrollWheelZoom
+        preferCanvas // ✅ render vectors via canvas
+        zoomAnimation={false} // ✅ faster first paint
+        fadeAnimation={true}
+        markerZoomAnimation={false}
+        inertia={true}
+        inertiaDeceleration={3000}
       >
         <TileLayer
           attribution="&copy; OpenStreetMap contributors"
           // url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
           url="https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png"
           // url="https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png"
+          updateWhenIdle
+          keepBuffer={1}
         />
         {/* UI buttons rendered over the map */}
         <LocateButton />
