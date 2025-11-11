@@ -1,7 +1,7 @@
 "use client";
 
 import dynamic from "next/dynamic";
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import {
   Scanner as ScannerComp,
   centerText,
@@ -21,9 +21,26 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 
-const Map = dynamic(() => import("@/components/Map"), { ssr: false });
+const Map = dynamic(() => import("@/components/Map"), {
+  ssr: false,
+  loading: () => (
+    <div className="h-[50vh] w-full max-w-3xl mx-auto rounded-xl border animate-pulse bg-muted" />
+  ),
+});
 
 export default function Home() {
+  const [showMap, setShowMap] = useState(false);
+
+  useEffect(() => {
+    const start = () => setShowMap(true);
+    // Prefer idle; fallback to a tiny timeout
+    if ("requestIdleCallback" in window) {
+      (window as any).requestIdleCallback(start, { timeout: 800 });
+    } else {
+      setTimeout(start, 150);
+    }
+  }, []);
+
   const [initialWord, setInitialWord] = useState("TCAH");
   const [answerWord, setAnswerWord] = useState("CHAT");
   const [submitted, setSubmitted] = useState({
@@ -54,9 +71,14 @@ export default function Home() {
 
   return (
     <div>
-      <div className="relative">
-        <Map />
+      <div className="rounded-xl overflow-hidden border h-[50vh]">
+        {showMap ? (
+          <Map />
+        ) : (
+          <div className="h-full w-full animate-pulse bg-muted" />
+        )}
       </div>
+
       <Dialog>
         <DialogTrigger>Open</DialogTrigger>
         <DialogContent>

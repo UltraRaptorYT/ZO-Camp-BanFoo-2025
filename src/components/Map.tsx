@@ -171,7 +171,7 @@ export default function UserMap() {
     <div style={{ height: "70vh", width: "100%", position: "relative" }}>
       <MapContainer
         center={initialCenter as any}
-        zoom={20}
+        zoom={50}
         style={{ height: "100%", width: "100%" }}
         scrollWheelZoom
       >
