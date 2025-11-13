@@ -14,9 +14,12 @@ import {
   DialogDescription,
   DialogHeader,
   DialogTitle,
+  DialogFooter,
+  DialogClose,
   // DialogTrigger,
 } from "@/components/ui/dialog";
 import supabase from "@/lib/supabase";
+import { Button } from "@/components/ui/button";
 
 // const Map = dynamic(() => import("@/components/Map"), {
 //   ssr: false,
@@ -175,6 +178,17 @@ export default function Home() {
                 : "CHALLENGE UNLOCkED!"}
             </DialogDescription>
           </DialogHeader>
+          <DialogFooter className="sm:justify-start">
+            <DialogClose asChild>
+              <Button
+                type="button"
+                variant="secondary"
+                onClick={() => setOpenDialog(false)}
+              >
+                Close
+              </Button>
+            </DialogClose>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
       <div className="mx-auto aspect-square max-w-3xl">
