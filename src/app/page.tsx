@@ -1,7 +1,7 @@
 "use client";
 
-import dynamic from "next/dynamic";
-import { useCallback, useEffect, useState } from "react";
+// import dynamic from "next/dynamic";
+import { useCallback, useState } from "react";
 import {
   Scanner as ScannerComp,
   centerText,
@@ -14,41 +14,99 @@ import {
   DialogDescription,
   DialogHeader,
   DialogTitle,
-  DialogTrigger,
+  // DialogTrigger,
 } from "@/components/ui/dialog";
-import { UnscrambleGame } from "@/components/UnscrambleGame";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
+import supabase from "@/lib/supabase";
 
-const Map = dynamic(() => import("@/components/Map"), {
-  ssr: false,
-  loading: () => (
-    <div className="h-[50vh] w-full max-w-3xl mx-auto rounded-xl border animate-pulse bg-muted" />
-  ),
-});
+// const Map = dynamic(() => import("@/components/Map"), {
+//   ssr: false,
+//   loading: () => (
+//     <div className="h-[50vh] w-full max-w-3xl mx-auto rounded-xl border animate-pulse bg-muted" />
+//   ),
+// });
+
+type FileQuestion = {
+  type: "FILE";
+  question: string;
+  src: string;
+};
+
+type InputQuestion = {
+  type: "INPUT";
+  question: string;
+  answer: string;
+};
+
+type GiftQuestion = {
+  type: "GIFT";
+  question: string;
+  reward: number;
+};
+
+type Qn = FileQuestion | InputQuestion | GiftQuestion;
+
+type QuestionType = {
+  id: number; // int8
+  qn: Qn;
+  type: "reward" | "noreward" | "empty" | "temptation" | "virtue";
+  created_at: string; // ISO date string
+};
 
 export default function Home() {
-  const [showMap, setShowMap] = useState(false);
+  // const [gold, setGold] = useState(0);
+  const [question, setQuestion] = useState<QuestionType>();
+  const [openDialog, setOpenDialog] = useState(false);
 
-  useEffect(() => {
-    const start = () => setShowMap(true);
-    // Prefer idle; fallback to a tiny timeout
-    if ("requestIdleCallback" in window) {
-      (window as any).requestIdleCallback(start, { timeout: 800 });
-    } else {
-      setTimeout(start, 150);
+  // useEffect(() => {},[])
+
+  // const [showMap, setShowMap] = useState(false);
+
+  // useEffect(() => {
+  //   const start = () => setShowMap(true);
+  //   // Prefer idle; fallback to a tiny timeout
+  //   if ("requestIdleCallback" in window) {
+  //     (window as any).requestIdleCallback(start, { timeout: 800 });
+  //   } else {
+  //     setTimeout(start, 150);
+  //   }
+  // }, []);
+
+  const openQuestion = async (questionNumber: string) => {
+    try {
+      if (!questionNumber) {
+        throw new Error("Invalid Question Number");
+      }
+
+      console.log("Fetching question data for code:", questionNumber);
+      const eventBody = {
+        questionNumber,
+      };
+
+      console.log(eventBody);
+
+      const { data, error } = await supabase
+        .from("zo_banfoo_25_qr")
+        .select()
+        .eq("id", questionNumber);
+
+      if (error) {
+        console.error("Question fetch failed:", error);
+        throw new Error(JSON.stringify(error) || "API error");
+      }
+
+      if (data && data.length > 0) {
+        return data[0] as QuestionType;
+      }
+
+      return null;
+    } catch (err) {
+      console.error(err);
+      toast.error("User not found locally or via API.");
+      return null;
     }
-  }, []);
+  };
 
-  const [initialWord, setInitialWord] = useState("TCAH");
-  const [answerWord, setAnswerWord] = useState("CHAT");
-  const [submitted, setSubmitted] = useState({
-    initial: "TCAH",
-    answer: "CHAT",
-  });
-
-  const handleScan = useCallback((detectedCodes: IDetectedBarcode[]) => {
+  const handleScan = useCallback(async (detectedCodes: IDetectedBarcode[]) => {
     const code = detectedCodes[0]?.rawValue;
     if (!code) return toast.error("Missing Code!");
     console.log("Scanned:", code);
@@ -56,7 +114,16 @@ export default function Home() {
     if (splitCode[0] != "zocampbanfoo") {
       return toast.error("Invalid Code!");
     }
-    return toast.success(splitCode[1]);
+
+    const questionNumber = splitCode[1];
+    const questionRes = await openQuestion(questionNumber);
+    console.log(questionRes);
+    if (questionRes) {
+      setQuestion(questionRes);
+      setOpenDialog(true);
+    }
+
+    return toast.success(questionNumber);
   }, []);
 
   const handleError = useCallback((error: unknown) => {
@@ -70,28 +137,47 @@ export default function Home() {
   }, []);
 
   return (
-    <div>
-      <div className="rounded-xl overflow-hidden border h-[50vh]">
+    <div className="fullHeight p-8 flex flex-col gap-5">
+      <h1 className="text-center font-bold text-2xl">Z+O Camp Ice Breaker</h1>
+      <div className="flex justify-between">
+        <div>Team: {"Group 12"}</div>
+        <div>Gold: {0}</div>
+        {/* <div>Gold: {gold}</div> */}
+      </div>
+      {/* <div className="rounded-xl overflow-hidden border h-[50vh]">
         {showMap ? (
           <Map />
         ) : (
           <div className="h-full w-full animate-pulse bg-muted" />
         )}
-      </div>
+      </div> */}
 
-      <Dialog>
-        <DialogTrigger>Open</DialogTrigger>
+      <Dialog open={openDialog}>
+        {/* <DialogTrigger>Open</DialogTrigger> */}
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Are you absolutely sure?</DialogTitle>
+            <DialogTitle>
+              {question?.type == "temptation"
+                ? "TREASURE FOUND!"
+                : question?.type == "empty"
+                ? "NO TREASURE FOUND!"
+                : question?.type == "virtue"
+                ? "VIRTUOUS ACTS REMINDER"
+                : "CHALLENGE UNLOCkED!"}
+            </DialogTitle>
             <DialogDescription>
-              This action cannot be undone. This will permanently delete your
-              account and remove your data from our servers.
+              {question?.type == "temptation"
+                ? "TREASURE FOUND!"
+                : question?.type == "empty"
+                ? "NO TREASURE FOUND!"
+                : question?.type == "virtue"
+                ? "VIRTUOUS ACTS REMINDER"
+                : "CHALLENGE UNLOCkED!"}
             </DialogDescription>
           </DialogHeader>
         </DialogContent>
       </Dialog>
-      <div className="w-4/5 mx-auto aspect-square max-w-3xl">
+      <div className="mx-auto aspect-square max-w-3xl">
         <ScannerComp
           formats={[
             "qr_code",
@@ -127,47 +213,6 @@ export default function Home() {
           }}
           allowMultiple={false}
           scanDelay={0}
-        />
-      </div>
-      <div className="min-h-dvh w-full p-6 flex flex-col gap-6">
-        <Card className="w-full max-w-xl mx-auto">
-          <CardHeader>
-            <CardTitle>Setup</CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-              <div className="space-y-1">
-                <label className="text-sm font-medium">
-                  Initial (scrambled) word
-                </label>
-                <Input
-                  value={initialWord}
-                  onChange={(e) => setInitialWord(e.target.value)}
-                  placeholder="e.g. TCAH"
-                />
-              </div>
-              <div className="space-y-1">
-                <label className="text-sm font-medium">Correct word</label>
-                <Input
-                  value={answerWord}
-                  onChange={(e) => setAnswerWord(e.target.value)}
-                  placeholder="e.g. CHAT"
-                />
-              </div>
-            </div>
-            <Button
-              onClick={() =>
-                setSubmitted({ initial: initialWord, answer: answerWord })
-              }
-            >
-              Start / Update Puzzle
-            </Button>
-          </CardContent>
-        </Card>
-
-        <UnscrambleGame
-          initialWord={submitted.initial}
-          answerWord={submitted.answer}
         />
       </div>
     </div>
