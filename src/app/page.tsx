@@ -1,7 +1,7 @@
 "use client";
 
 // import dynamic from "next/dynamic";
-import { useCallback, useState } from "react";
+import { useCallback, useState, FormEvent } from "react";
 import {
   Scanner as ScannerComp,
   centerText,
@@ -14,12 +14,11 @@ import {
   DialogDescription,
   DialogHeader,
   DialogTitle,
-  DialogFooter,
-  DialogClose,
-  // DialogTrigger,
 } from "@/components/ui/dialog";
 import supabase from "@/lib/supabase";
 import { Button } from "@/components/ui/button";
+import { Label } from "@/components/ui/label";
+import { Input } from "@/components/ui/input";
 
 // const Map = dynamic(() => import("@/components/Map"), {
 //   ssr: false,
@@ -43,7 +42,6 @@ type InputQuestion = {
 type GiftQuestion = {
   type: "GIFT";
   question: string;
-  reward: number;
 };
 
 type Qn = FileQuestion | InputQuestion | GiftQuestion;
@@ -56,9 +54,13 @@ type QuestionType = {
 };
 
 export default function Home() {
-  // const [gold, setGold] = useState(0);
+  const teamId = 1;
+  // const [teamId, setTeamId] = useState()
+  const [gold, setGold] = useState(0);
   const [question, setQuestion] = useState<QuestionType>();
   const [openDialog, setOpenDialog] = useState(false);
+  const [answerInput, setAnswerInput] = useState("");
+  const [openCorrect, setOpenCorrect] = useState(false);
 
   // useEffect(() => {},[])
 
@@ -126,7 +128,8 @@ export default function Home() {
       setOpenDialog(true);
     }
 
-    return toast.success(questionNumber);
+    // return toast.success(questionNumber);
+    return;
   }, []);
 
   const handleError = useCallback((error: unknown) => {
@@ -139,13 +142,39 @@ export default function Home() {
     }
   }, []);
 
+  const handleSubmit = async (e: FormEvent<HTMLFormElement>) => {
+    e.preventDefault();
+    if (!question || question.qn.type !== "INPUT") return;
+
+    const userAnswer = answerInput.trim();
+    const correctAnswer = question.qn.answer.trim();
+
+    const isCorrect = userAnswer.toUpperCase() === correctAnswer.toUpperCase();
+
+    if (isCorrect) {
+      toast.success("Correct answer! 🎉");
+      setOpenCorrect(true);
+
+      await supabase.from("zo_banfoo_25_icebreaker").insert({
+        team_id: teamId,
+        team_number: 1,
+        qr: question.id,
+      });
+
+      setGold((prev) => prev + 1);
+    } else {
+      toast.error("Incorrect answer, try again!");
+      return;
+    }
+
+    setOpenDialog(false);
+  };
   return (
     <div className="fullHeight p-8 flex flex-col gap-5">
       <h1 className="text-center font-bold text-2xl">Z+O Camp Ice Breaker</h1>
       <div className="flex justify-between">
-        <div>Team: {"Group 12"}</div>
-        <div>Gold: {0}</div>
-        {/* <div>Gold: {gold}</div> */}
+        <div>Team: Group {teamId}</div>
+        <div>Gold: {gold}</div>
       </div>
       {/* <div className="rounded-xl overflow-hidden border h-[50vh]">
         {showMap ? (
@@ -154,6 +183,41 @@ export default function Home() {
           <div className="h-full w-full animate-pulse bg-muted" />
         )}
       </div> */}
+
+      <Dialog open={openCorrect} onOpenChange={setOpenCorrect}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>
+              {question?.type == "temptation"
+                ? "TREASURE FOUND!"
+                : question?.type == "empty"
+                ? "NO TREASURE FOUND!"
+                : question?.type == "virtue"
+                ? "VIRTUOUS ACTS REMINDER"
+                : "CHALLENGE COMPLETED!"}
+            </DialogTitle>
+            <DialogDescription>
+              {question?.type == "temptation"
+                ? "TREASURE FOUND!"
+                : question?.type == "empty"
+                ? "Unfortunately, there is no gold bar here. Better luck at the next location!"
+                : question?.type == "virtue"
+                ? `Have you done a virtuous act during camp? Upload a photo of your act to earn gold bars!
+
+Remember: Only genuine acts of virtue count! Show your virtuous hearts now!`
+                : question?.type == "noreward"
+                ? `
+Well done completing the challenge!
+
+But oops... Looks like this treasure chest had a hole in the bottom! The gold bars rolled away long ago! Better luck at the next location!`
+                : `
+Well done completing the challenge!
+
+But oops... Looks like this treasure chest had a hole in the bottom! The gold bars rolled away long ago! Better luck at the next location!`}
+            </DialogDescription>
+          </DialogHeader>
+        </DialogContent>
+      </Dialog>
 
       <Dialog open={openDialog}>
         {/* <DialogTrigger>Open</DialogTrigger> */}
@@ -166,29 +230,36 @@ export default function Home() {
                 ? "NO TREASURE FOUND!"
                 : question?.type == "virtue"
                 ? "VIRTUOUS ACTS REMINDER"
-                : "CHALLENGE UNLOCkED!"}
+                : "CHALLENGE UNLOCKED!"}
             </DialogTitle>
             <DialogDescription>
               {question?.type == "temptation"
                 ? "TREASURE FOUND!"
                 : question?.type == "empty"
-                ? "NO TREASURE FOUND!"
+                ? "Unfortunately, there is no gold bar here. Better luck at the next location!"
                 : question?.type == "virtue"
-                ? "VIRTUOUS ACTS REMINDER"
-                : "CHALLENGE UNLOCkED!"}
+                ? `Have you done a virtuous act during camp? Upload a photo of your act to earn gold bars!
+
+Remember: Only genuine acts of virtue count! Show your virtuous hearts now!`
+                : "You've discovered a challenge! Complete it!"}
             </DialogDescription>
           </DialogHeader>
-          <DialogFooter className="sm:justify-start">
-            <DialogClose asChild>
-              <Button
-                type="button"
-                variant="secondary"
-                onClick={() => setOpenDialog(false)}
-              >
-                Close
-              </Button>
-            </DialogClose>
-          </DialogFooter>
+          {question?.qn.type == "INPUT" ? (
+            <form onSubmit={handleSubmit} className="space-y-4">
+              <p>{question.qn.question}</p>
+              <div className="grid w-full max-w-sm items-center gap-3">
+                <Label htmlFor="answer">Answer</Label>
+                <Input
+                  id="answer"
+                  type="text"
+                  placeholder="Answer"
+                  value={answerInput}
+                  onChange={(e) => setAnswerInput(e.target.value)}
+                />
+              </div>
+              <Button type="submit">Submit</Button>
+            </form>
+          ) : null}
         </DialogContent>
       </Dialog>
       <div className="mx-auto aspect-square max-w-3xl">
