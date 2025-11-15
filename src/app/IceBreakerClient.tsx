@@ -384,7 +384,7 @@ A major flood has been triggered. ${lost} gold bars have been swept away by the 
       </div> */}
 
       <Dialog open={openCorrect} onOpenChange={setOpenCorrect}>
-        <DialogContent>
+        <DialogContent showCloseButton={false}>
           <DialogHeader>
             <DialogTitle>
               {question?.type === "temptation"
@@ -418,8 +418,7 @@ But oops... Looks like this treasure chest had a hole in the bottom! The gold ba
       </Dialog>
 
       <Dialog open={openDialog}>
-        {/* <DialogTrigger>Open</DialogTrigger> */}
-        <DialogContent>
+        <DialogContent showCloseButton={false}>
           <DialogHeader>
             <DialogTitle>
               {question?.type === "temptation"
@@ -445,17 +444,6 @@ Remember: Only genuine acts of virtue count! Show your virtuous hearts now!`
           {question?.type === "temptation" ? (
             <div className="space-y-4">
               <p>{question.qn.question}</p>
-              <DialogFooter className="sm:justify-start">
-                <DialogClose asChild>
-                  <Button
-                    type="button"
-                    variant="secondary"
-                    onClick={handleTemptation}
-                  >
-                    Close
-                  </Button>
-                </DialogClose>
-              </DialogFooter>
             </div>
           ) : question?.qn.type === "INPUT" ? (
             <form onSubmit={handleSubmit} className="space-y-4">
@@ -493,24 +481,24 @@ Remember: Only genuine acts of virtue count! Show your virtuous hearts now!`
               >
                 Submit
               </Button>
-              <DialogFooter className="sm:justify-start">
-                <DialogClose asChild>
-                  <Button
-                    type="button"
-                    variant="secondary"
-                    onClick={() => setOpenDialog(false)}
-                  >
-                    Close
-                  </Button>
-                </DialogClose>
-              </DialogFooter>
             </form>
           ) : null}
+          <DialogFooter className="sm:justify-start">
+            <DialogClose asChild>
+              <Button
+                type="button"
+                variant="destructive"
+                onClick={() => setOpenDialog(false)}
+              >
+                I give up
+              </Button>
+            </DialogClose>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
-      {/* <Button onClick={() => processCode("zocampbanfoo_3")}>
+      <Button onClick={() => processCode("zocampbanfoo_1")}>
         Trigger Scan
-      </Button> */}
+      </Button>
       <div className="mx-auto aspect-square max-w-3xl border w-full">
         <ScannerComp
           formats={[
