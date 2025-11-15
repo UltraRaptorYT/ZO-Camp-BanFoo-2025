@@ -1,6 +1,7 @@
 "use client";
 
 // import dynamic from "next/dynamic";
+import { useSearchParams } from "next/navigation";
 import { useCallback, useState, FormEvent, useEffect, useRef } from "react";
 import {
   Scanner as ScannerComp,
@@ -62,7 +63,8 @@ type QuestionType = {
 };
 
 export default function Home() {
-  const teamId = 1;
+  const searchParams = useSearchParams();
+  const teamId = Number(searchParams.get("team_id")) || 1;
   // const [teamId, setTeamId] = useState()
   const goldRef = useRef(0);
   const [gold, setGold] = useState(0);
