@@ -507,7 +507,7 @@ Remember: Only genuine acts of virtue count! Show your virtuous hearts now!`
       {/* <Button onClick={() => processCode("zocampbanfoo_3")}>
         Trigger Scan
       </Button> */}
-      <div className="mx-auto aspect-square max-w-3xl">
+      <div className="mx-auto aspect-square max-w-3xl" data-theme="light">
         <ScannerComp
           formats={[
             "qr_code",
