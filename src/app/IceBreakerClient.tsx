@@ -487,10 +487,19 @@ Remember: Only genuine acts of virtue count! Show your virtuous hearts now!`
             <DialogClose asChild>
               <Button
                 type="button"
-                variant="destructive"
-                onClick={() => setOpenDialog(false)}
+                variant={
+                  question?.type === "temptation" ? "secondary" : "destructive"
+                }
+                onClick={async () => {
+                  if (question?.type !== "temptation") {
+                    toast.info("You gave up");
+                  } else {
+                    await handleTemptation();
+                  }
+                  setOpenDialog(false);
+                }}
               >
-                I give up
+                {question?.type === "temptation" ? "Close" : "I give up"}
               </Button>
             </DialogClose>
           </DialogFooter>
