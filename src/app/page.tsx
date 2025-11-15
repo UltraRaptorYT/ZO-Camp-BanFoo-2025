@@ -1,7 +1,7 @@
 "use client";
 
 // import dynamic from "next/dynamic";
-import { useCallback, useState, FormEvent } from "react";
+import { useCallback, useState, FormEvent, useEffect, useRef } from "react";
 import {
   Scanner as ScannerComp,
   centerText,
@@ -14,6 +14,8 @@ import {
   DialogDescription,
   DialogHeader,
   DialogTitle,
+  DialogFooter,
+  DialogClose,
 } from "@/components/ui/dialog";
 import supabase from "@/lib/supabase";
 import { Button } from "@/components/ui/button";
@@ -62,6 +64,7 @@ type QuestionType = {
 export default function Home() {
   const teamId = 1;
   // const [teamId, setTeamId] = useState()
+  const goldRef = useRef(0);
   const [gold, setGold] = useState(0);
   const [question, setQuestion] = useState<QuestionType>();
   const [openDialog, setOpenDialog] = useState(false);
@@ -73,7 +76,101 @@ export default function Home() {
     setFiles(files);
   };
 
-  // useEffect(() => {},[])
+  useEffect(() => {
+    goldRef.current = gold;
+  }, [gold]);
+
+  useEffect(() => {
+    const getScore = async () => {
+      const { data, error } = await supabase
+        .from("zo_banfoo_25_score")
+        .select()
+        .eq("team_id", teamId);
+
+      if (error) {
+        return toast.error("Failed to get score");
+      }
+
+      const score = data
+        .map((e) => e.score)
+        .reduce((a, v) => {
+          return a + v;
+        }, 0);
+
+      setGold(score);
+    };
+
+    getScore();
+  }, []);
+
+  useEffect(() => {
+    // subscribe to updates on zo_banfoo_25_state table
+    const channel = supabase
+      .channel("state-listener")
+      .on(
+        "postgres_changes",
+        {
+          event: "*", // INSERT | UPDATE | DELETE | *
+          schema: "public",
+          table: "zo_banfoo_25_state",
+        },
+        async (payload) => {
+          console.log("Realtime payload:", payload);
+
+          await handleStateUpdate(payload.new);
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, []);
+
+  const handleStateUpdate = async (newState: any) => {
+    console.log("State changed:", newState);
+
+    if (newState.value == "true") {
+      if (newState.key == "naturalDisaster") {
+        const currentGold = goldRef.current;
+        console.log("Current gold at disaster:", currentGold);
+
+        const lost = Math.floor(currentGold / 2);
+        if (lost <= 0) {
+          toast.warning("WARNING!", {
+            description:
+              "A major flood has been triggered, but you had no gold to lose.",
+          });
+          return;
+        }
+
+        // 1) log the deduction in DB (negative score)
+        const { error } = await supabase.from("zo_banfoo_25_score").insert({
+          team_id: teamId,
+          score: -lost,
+          isAdmin: true,
+          remarks: "Natural Disaster",
+        });
+
+        if (error) {
+          console.error(error);
+          toast.error("Failed to apply natural disaster.");
+          return;
+        }
+
+        // 2) update local state
+        setGold(currentGold - lost);
+
+        toast.warning(`WARNING!`, {
+          description: `Excessive anger detected!
+
+A major flood has been triggered. ${lost} gold bars have been swept away by the flood.`,
+        });
+      } else {
+        toast.warning(`WARNING!`);
+      }
+    }
+  };
 
   // const [showMap, setShowMap] = useState(false);
 
@@ -124,23 +221,7 @@ export default function Home() {
 
   const handleScan = useCallback(async (detectedCodes: IDetectedBarcode[]) => {
     const code = detectedCodes[0]?.rawValue;
-    if (!code) return toast.error("Missing Code!");
-    console.log("Scanned:", code);
-    const splitCode = code.split("_");
-    if (splitCode[0] != "zocampbanfoo") {
-      return toast.error("Invalid Code!");
-    }
-
-    const questionNumber = splitCode[1];
-    const questionRes = await openQuestion(questionNumber);
-    console.log(questionRes);
-    if (questionRes) {
-      setQuestion(questionRes);
-      setOpenDialog(true);
-    }
-
-    // return toast.success(questionNumber);
-    return;
+    return await processCode(code);
   }, []);
 
   const handleError = useCallback((error: unknown) => {
@@ -187,13 +268,17 @@ export default function Home() {
       // Log completion of challenge (adjust columns to match your schema)
       await supabase.from("zo_banfoo_25_icebreaker").insert({
         team_id: teamId,
-        team_number: 1, // or teamId if you want it dynamic
         qr: question.id,
         // files: uploadedPaths, // <- if you have a column (e.g. jsonb/text[]) for this
       });
 
-      // Reward gold, clear state, show success dialog
-      setGold((prev) => prev + 1);
+      await supabase.from("zo_banfoo_25_score").insert({
+        team_id: teamId,
+        score: question.points,
+        remarks: `Question ${question.id}`,
+      });
+
+      setGold((prev) => prev + question.points);
       setFiles(undefined);
       setOpenDialog(false);
       setOpenCorrect(true);
@@ -205,14 +290,57 @@ export default function Home() {
     }
   };
 
+  const handleTemptation = async () => {
+    if (!question || question.type !== "temptation") return;
+
+    await supabase.from("zo_banfoo_25_icebreaker").insert({
+      team_id: teamId,
+      qr: question.id,
+    });
+    toast.success("Congratulations! 🎉");
+
+    await supabase.from("zo_banfoo_25_score").insert({
+      team_id: teamId,
+      score: question.points,
+      remarks: `Question ${question.id}`,
+    });
+
+    setGold((prev) => prev + question.points);
+    setOpenDialog(false);
+  };
+
+  const processCode = async (rawCode: string) => {
+    if (!rawCode) return toast.error("Missing Code!");
+
+    console.log("Processing code:", rawCode);
+    const splitCode = rawCode.split("_");
+    if (splitCode[0] !== "zocampbanfoo") {
+      return toast.error("Invalid Code!");
+    }
+
+    const questionNumber = splitCode[1];
+    const questionRes = await openQuestion(questionNumber);
+
+    console.log(questionRes);
+
+    if (questionRes) {
+      setQuestion(questionRes);
+      setOpenDialog(true);
+      setAnswerInput("");
+    }
+  };
+
   const handleSubmit = async (e: FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     if (!question || question.qn.type !== "INPUT") return;
 
-    const userAnswer = answerInput.trim();
-    const correctAnswer = question.qn.answer.trim();
+    const userAnswer = String(answerInput).trim();
+    const correctAnswer = String(question.qn.answer).trim();
 
-    const isCorrect = userAnswer.toUpperCase() === correctAnswer.toUpperCase();
+    let isCorrect = userAnswer.toUpperCase() === correctAnswer.toUpperCase();
+    if (question.id == 30) {
+      isCorrect = userAnswer.includes(correctAnswer);
+    }
 
     if (isCorrect) {
       toast.success("Correct answer! 🎉");
@@ -220,8 +348,13 @@ export default function Home() {
 
       await supabase.from("zo_banfoo_25_icebreaker").insert({
         team_id: teamId,
-        team_number: 1,
         qr: question.id,
+      });
+
+      await supabase.from("zo_banfoo_25_score").insert({
+        team_id: teamId,
+        score: question.points,
+        remarks: `Question ${question.id}`,
       });
 
       setGold((prev) => prev + question.points);
@@ -261,7 +394,7 @@ export default function Home() {
             </DialogTitle>
             <DialogDescription>
               {question?.type == "temptation"
-                ? "TREASURE FOUND!"
+                ? ""
                 : question?.type == "empty"
                 ? "Unfortunately, there is no gold bar here. Better luck at the next location!"
                 : question?.type == "virtue"
@@ -273,10 +406,9 @@ Remember: Only genuine acts of virtue count! Show your virtuous hearts now!`
 Well done completing the challenge!
 
 But oops... Looks like this treasure chest had a hole in the bottom! The gold bars rolled away long ago! Better luck at the next location!`
-                : `
-Well done completing the challenge!
+                : `Well done completing the challenge!
 
-But oops... Looks like this treasure chest had a hole in the bottom! The gold bars rolled away long ago! Better luck at the next location!`}
+              ${question?.points} gold bars added to your treasure chest! Keep up the good work!`}
             </DialogDescription>
           </DialogHeader>
         </DialogContent>
@@ -297,7 +429,7 @@ But oops... Looks like this treasure chest had a hole in the bottom! The gold ba
             </DialogTitle>
             <DialogDescription>
               {question?.type == "temptation"
-                ? "TREASURE FOUND!"
+                ? ""
                 : question?.type == "empty"
                 ? "Unfortunately, there is no gold bar here. Better luck at the next location!"
                 : question?.type == "virtue"
@@ -307,7 +439,22 @@ Remember: Only genuine acts of virtue count! Show your virtuous hearts now!`
                 : "You've discovered a challenge! Complete it!"}
             </DialogDescription>
           </DialogHeader>
-          {question?.qn.type == "INPUT" ? (
+          {question?.type == "temptation" ? (
+            <div className="space-y-4">
+              <p>{question.qn.question}</p>
+              <DialogFooter className="sm:justify-start">
+                <DialogClose asChild>
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    onClick={handleTemptation}
+                  >
+                    Close
+                  </Button>
+                </DialogClose>
+              </DialogFooter>
+            </div>
+          ) : question?.qn.type == "INPUT" ? (
             <form onSubmit={handleSubmit} className="space-y-4">
               <p>{question.qn.question}</p>
               <div className="grid w-full max-w-sm items-center gap-3">
@@ -343,12 +490,26 @@ Remember: Only genuine acts of virtue count! Show your virtuous hearts now!`
               >
                 Submit
               </Button>
+              <DialogFooter className="sm:justify-start">
+                <DialogClose asChild>
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    onClick={() => setOpenDialog(false)}
+                  >
+                    Close
+                  </Button>
+                </DialogClose>
+              </DialogFooter>
             </form>
           ) : (
             ""
           )}
         </DialogContent>
       </Dialog>
+      <Button onClick={() => processCode("zocampbanfoo_3")}>
+        Trigger Scan
+      </Button>
       <div className="mx-auto aspect-square max-w-3xl">
         <ScannerComp
           formats={[
