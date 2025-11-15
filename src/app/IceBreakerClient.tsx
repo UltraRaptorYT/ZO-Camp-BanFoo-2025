@@ -218,10 +218,14 @@ A major flood has been triggered. ${lost} gold bars have been swept away by the 
     }
   };
 
-  const handleScan = useCallback(async (detectedCodes: IDetectedBarcode[]) => {
-    const code = detectedCodes[0]?.rawValue;
-    return await processCode(code);
-  }, []);
+  const handleScan = useCallback(
+    async (detectedCodes: IDetectedBarcode[]) => {
+      if (openDialog) return;
+      const code = detectedCodes[0]?.rawValue;
+      return await processCode(code);
+    },
+    [openDialog]
+  );
 
   const handleError = useCallback((error: unknown) => {
     if (error instanceof Error) {
@@ -507,7 +511,7 @@ Remember: Only genuine acts of virtue count! Show your virtuous hearts now!`
       {/* <Button onClick={() => processCode("zocampbanfoo_3")}>
         Trigger Scan
       </Button> */}
-      <div className="mx-auto aspect-square max-w-3xl" data-theme="light">
+      <div className="mx-auto aspect-square max-w-3xl border w-full">
         <ScannerComp
           formats={[
             "qr_code",
@@ -543,6 +547,7 @@ Remember: Only genuine acts of virtue count! Show your virtuous hearts now!`
           }}
           allowMultiple={false}
           scanDelay={0}
+          paused={openDialog}
         />
       </div>
     </div>
