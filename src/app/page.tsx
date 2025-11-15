@@ -19,6 +19,11 @@ import supabase from "@/lib/supabase";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
+import {
+  Dropzone,
+  DropzoneContent,
+  DropzoneEmptyState,
+} from "@/components/ui/shadcn-io/dropzone";
 
 // const Map = dynamic(() => import("@/components/Map"), {
 //   ssr: false,
@@ -47,10 +52,11 @@ type GiftQuestion = {
 type Qn = FileQuestion | InputQuestion | GiftQuestion;
 
 type QuestionType = {
-  id: number; // int8
+  id: number;
   qn: Qn;
   type: "reward" | "noreward" | "empty" | "temptation" | "virtue";
-  created_at: string; // ISO date string
+  points: number;
+  created_at: string;
 };
 
 export default function Home() {
@@ -61,6 +67,11 @@ export default function Home() {
   const [openDialog, setOpenDialog] = useState(false);
   const [answerInput, setAnswerInput] = useState("");
   const [openCorrect, setOpenCorrect] = useState(false);
+  const [files, setFiles] = useState<File[] | undefined>();
+  const handleDrop = (files: File[]) => {
+    console.log(files);
+    setFiles(files);
+  };
 
   // useEffect(() => {},[])
 
@@ -142,6 +153,58 @@ export default function Home() {
     }
   }, []);
 
+  const handleFileSubmit = async (e: FormEvent<HTMLFormElement>) => {
+    e.preventDefault();
+
+    if (!question || question.qn.type !== "FILE") return;
+
+    if (!files || files.length === 0) {
+      toast.error("Please upload at least one file.");
+      return;
+    }
+
+    try {
+      // Upload each file to Supabase Storage
+      const uploadedPaths: string[] = [];
+
+      for (const file of files) {
+        const filePath = `team-${teamId}/qr-${question.id}/${Date.now()}-${
+          file.name
+        }`;
+
+        const { error } = await supabase.storage
+          .from("zo_banfoo_25_uploads") // CHANGE to your actual bucket name
+          .upload(filePath, file);
+
+        if (error) {
+          console.error("Upload error:", error);
+          throw error;
+        }
+
+        uploadedPaths.push(filePath);
+      }
+
+      // Log completion of challenge (adjust columns to match your schema)
+      await supabase.from("zo_banfoo_25_icebreaker").insert({
+        team_id: teamId,
+        team_number: 1, // or teamId if you want it dynamic
+        qr: question.id,
+        // files: uploadedPaths, // <- if you have a column (e.g. jsonb/text[]) for this
+      });
+
+      // Reward gold, clear state, show success dialog
+      setGold((prev) => prev + 1);
+      setFiles(undefined);
+      setOpenDialog(false);
+      setOpenCorrect(true);
+
+      toast.success("Files uploaded successfully! 🎉");
+    } catch (err) {
+      console.error(err);
+      toast.error("Something went wrong while uploading the files.");
+    }
+  };
+
   const handleSubmit = async (e: FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     if (!question || question.qn.type !== "INPUT") return;
@@ -161,7 +224,7 @@ export default function Home() {
         qr: question.id,
       });
 
-      setGold((prev) => prev + 1);
+      setGold((prev) => prev + question.points);
     } else {
       toast.error("Incorrect answer, try again!");
       return;
@@ -259,7 +322,31 @@ Remember: Only genuine acts of virtue count! Show your virtuous hearts now!`
               </div>
               <Button type="submit">Submit</Button>
             </form>
-          ) : null}
+          ) : question?.qn.type == "FILE" ? (
+            <form onSubmit={handleFileSubmit} className="space-y-4">
+              <p>{question.qn.question}</p>
+              <Dropzone
+                className="whitespace-pre-line w-full"
+                maxFiles={3}
+                onDrop={handleDrop}
+                onError={console.error}
+                src={files}
+              >
+                <DropzoneEmptyState />
+                <DropzoneContent />
+              </Dropzone>
+
+              <Button
+                type="submit"
+                disabled={!files || files.length === 0}
+                className="columnn center"
+              >
+                Submit
+              </Button>
+            </form>
+          ) : (
+            ""
+          )}
         </DialogContent>
       </Dialog>
       <div className="mx-auto aspect-square max-w-3xl">
