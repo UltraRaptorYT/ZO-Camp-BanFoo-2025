@@ -496,9 +496,9 @@ Remember: Only genuine acts of virtue count! Show your virtuous hearts now!`
           </DialogFooter>
         </DialogContent>
       </Dialog>
-      <Button onClick={() => processCode("zocampbanfoo_1")}>
+      {/* <Button onClick={() => processCode("zocampbanfoo_1")}>
         Trigger Scan
-      </Button>
+      </Button> */}
       <div className="mx-auto aspect-square max-w-3xl border w-full">
         <ScannerComp
           formats={[
