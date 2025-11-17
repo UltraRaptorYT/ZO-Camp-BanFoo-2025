@@ -1,6 +1,5 @@
 "use client";
 
-// import dynamic from "next/dynamic";
 import { useSearchParams } from "next/navigation";
 import { useCallback, useState, FormEvent, useEffect, useRef } from "react";
 import {
@@ -28,13 +27,6 @@ import {
   DropzoneEmptyState,
 } from "@/components/ui/shadcn-io/dropzone";
 
-// const Map = dynamic(() => import("@/components/Map"), {
-//   ssr: false,
-//   loading: () => (
-//     <div className="h-[50vh] w-full max-w-3xl mx-auto rounded-xl border animate-pulse bg-muted" />
-//   ),
-// });
-
 type FileQuestion = {
   type: "FILE";
   question: string;
@@ -52,7 +44,12 @@ type GiftQuestion = {
   question: string;
 };
 
-type Qn = FileQuestion | InputQuestion | GiftQuestion;
+type TaskQuestion = {
+  type: "TASK";
+  question: string;
+};
+
+type Qn = FileQuestion | InputQuestion | GiftQuestion | TaskQuestion;
 
 type QuestionType = {
   id: number;
@@ -62,11 +59,87 @@ type QuestionType = {
   created_at: string;
 };
 
+// --- Helper functions to combine dialog logic ---
+
+type DialogVariant = "challenge" | "result";
+
+const getDialogTitle = (
+  question: QuestionType | undefined,
+  variant: DialogVariant
+) => {
+  const defaultTitle =
+    variant === "challenge" ? "CHALLENGE UNLOCKED!" : "CHALLENGE COMPLETED!";
+
+  if (!question) return defaultTitle;
+
+  switch (question.type) {
+    case "temptation":
+      return "TREASURE FOUND!";
+    case "empty":
+      return "NO TREASURE FOUND!";
+    case "virtue":
+      return "VIRTUOUS ACTS REMINDER";
+    default:
+      return defaultTitle;
+  }
+};
+
+const getDialogDescription = (
+  question: QuestionType | undefined,
+  variant: DialogVariant
+) => {
+  if (!question) {
+    return variant === "challenge"
+      ? "You've discovered a challenge! Complete it!"
+      : "Well done completing the challenge!";
+  }
+
+  // Temptation: both dialogs show no extra description
+  if (question.type === "temptation") {
+    return "";
+  }
+
+  if (question.type === "empty") {
+    return "Unfortunately, there is no gold bar here. Better luck at the next location!";
+  }
+
+  if (question.type === "virtue") {
+    return `Have you done a virtuous act during camp? Upload a photo of your act to earn gold bars!
+
+Remember: Only genuine acts of virtue count! Show your virtuous hearts now!`;
+  }
+
+  if (question.type === "noreward") {
+    if (variant === "result") {
+      return [
+        "Well done completing the challenge!",
+        "But oops... Looks like this treasure chest had a hole in the bottom!",
+        "The gold bars rolled away long ago!",
+        "Better luck at the next location!",
+      ].join("\n");
+    }
+
+    // Challenge variant falls back to generic challenge message
+    return "You've discovered a challenge! Complete it!";
+  }
+
+  // Default: normal reward question
+  if (variant === "result") {
+    return `Well done completing the challenge!
+
+${question.points} gold bars added to your treasure chest! Keep up the good work!`;
+  }
+
+  return "You've discovered a challenge! Complete it!";
+};
+
+// --- Component ---
+
 export default function IcebreakerClient() {
   const searchParams = useSearchParams();
   const rawTeamId = Number(searchParams.get("team_id") ?? "1");
   const teamId = isNaN(rawTeamId) || rawTeamId < 1 ? 1 : rawTeamId;
-  // const [teamId, setTeamId] = useState()
+
   const goldRef = useRef(0);
   const [gold, setGold] = useState(0);
   const [question, setQuestion] = useState<QuestionType>();
@@ -74,10 +147,59 @@ export default function IcebreakerClient() {
   const [answerInput, setAnswerInput] = useState("");
   const [openCorrect, setOpenCorrect] = useState(false);
   const [files, setFiles] = useState<File[] | undefined>();
+
   const handleDrop = (files: File[]) => {
     console.log(files);
     setFiles(files);
   };
+
+  // --- Shared helper: log completion + award points ---
+  const awardPointsAndLog = useCallback(
+    async (
+      q: QuestionType,
+      extraIcebreakerFields: Record<string, any> = {}
+    ) => {
+      try {
+        // Log completion of this QR challenge
+        const { error: iceErr } = await supabase
+          .from("zo_banfoo_25_icebreaker")
+          .insert({
+            team_id: teamId,
+            qr: q.id,
+            ...extraIcebreakerFields,
+          });
+
+        if (iceErr) {
+          console.error("Icebreaker insert error:", iceErr);
+          toast.error("Failed to log challenge completion.");
+          return false;
+        }
+
+        // Award points
+        const { error: scoreErr } = await supabase
+          .from("zo_banfoo_25_score")
+          .insert({
+            team_id: teamId,
+            score: q.points,
+            remarks: `Question ${q.id}`,
+          });
+
+        if (scoreErr) {
+          console.error("Score insert error:", scoreErr);
+          toast.error("Failed to award points.");
+          return false;
+        }
+
+        setGold((prev) => prev + q.points);
+        return true;
+      } catch (err) {
+        console.error(err);
+        toast.error("Something went wrong while awarding points.");
+        return false;
+      }
+    },
+    [teamId]
+  );
 
   useEffect(() => {
     goldRef.current = gold;
@@ -95,7 +217,6 @@ export default function IcebreakerClient() {
       }
 
       const score = data.map((e) => e.score).reduce((a, v) => a + v, 0);
-
       setGold(score);
     };
 
@@ -103,19 +224,17 @@ export default function IcebreakerClient() {
   }, [teamId]);
 
   useEffect(() => {
-    // subscribe to updates on zo_banfoo_25_state table
     const channel = supabase
       .channel("state-listener")
       .on(
         "postgres_changes",
         {
-          event: "*", // INSERT | UPDATE | DELETE | *
+          event: "*",
           schema: "public",
           table: "zo_banfoo_25_state",
         },
         async (payload) => {
           console.log("Realtime payload:", payload);
-
           await handleStateUpdate(payload.new);
         }
       )
@@ -143,7 +262,6 @@ export default function IcebreakerClient() {
           return;
         }
 
-        // 1) log the deduction in DB (negative score)
         const { error } = await supabase.from("zo_banfoo_25_score").insert({
           team_id: teamId,
           score: -lost,
@@ -157,7 +275,6 @@ export default function IcebreakerClient() {
           return;
         }
 
-        // 2) update local state
         setGold(currentGold - lost);
 
         toast.warning(`WARNING!`, {
@@ -171,18 +288,6 @@ A major flood has been triggered. ${lost} gold bars have been swept away by the 
     }
   };
 
-  // const [showMap, setShowMap] = useState(false);
-
-  // useEffect(() => {
-  //   const start = () => setShowMap(true);
-  //   // Prefer idle; fallback to a tiny timeout
-  //   if ("requestIdleCallback" in window) {
-  //     (window as any).requestIdleCallback(start, { timeout: 800 });
-  //   } else {
-  //     setTimeout(start, 150);
-  //   }
-  // }, []);
-
   const openQuestion = async (questionNumber: string) => {
     try {
       if (!questionNumber) {
@@ -190,11 +295,6 @@ A major flood has been triggered. ${lost} gold bars have been swept away by the 
       }
 
       console.log("Fetching question data for code:", questionNumber);
-      const eventBody = {
-        questionNumber,
-      };
-
-      console.log(eventBody);
 
       const { data, error } = await supabase
         .from("zo_banfoo_25_qr")
@@ -215,6 +315,27 @@ A major flood has been triggered. ${lost} gold bars have been swept away by the 
       console.error(err);
       toast.error("Question not found");
       return null;
+    }
+  };
+
+  const processCode = async (rawCode: string | undefined) => {
+    if (!rawCode) return toast.error("Missing Code!");
+
+    console.log("Processing code:", rawCode);
+    const splitCode = rawCode.split("_");
+    if (splitCode[0] !== "zocampbanfoo") {
+      return toast.error("Invalid Code!");
+    }
+
+    const questionNumber = splitCode[1];
+    const questionRes = await openQuestion(questionNumber);
+
+    console.log(questionRes);
+
+    if (questionRes) {
+      setQuestion(questionRes);
+      setOpenDialog(true);
+      setAnswerInput("");
     }
   };
 
@@ -248,16 +369,15 @@ A major flood has been triggered. ${lost} gold bars have been swept away by the 
     }
 
     try {
-      // Upload each file to Supabase Storage
       const uploadedPaths: string[] = [];
 
       for (const file of files) {
-        const filePath = `team-${teamId}/qr-${question.id}/${Date.now()}-${
-          file.name
-        }`;
+        const filePath = `${question.qn.src}/team-${teamId}_qr-${
+          question.id
+        }_${Date.now()}_${file.name}`;
 
         const { error } = await supabase.storage
-          .from("zo_banfoo_25_uploads") // CHANGE to your actual bucket name
+          .from("zo_banfoo_25")
           .upload(filePath, file);
 
         if (error) {
@@ -265,23 +385,14 @@ A major flood has been triggered. ${lost} gold bars have been swept away by the 
           throw error;
         }
 
-        uploadedPaths.push(filePath);
+        uploadedPaths.push(
+          `${process.env.NEXT_PUBLIC_SUPABASE_URL}/storage/v1/object/public/zo_banfoo_25/${filePath}`
+        );
       }
 
-      // Log completion of challenge (adjust columns to match your schema)
-      await supabase.from("zo_banfoo_25_icebreaker").insert({
-        team_id: teamId,
-        qr: question.id,
-        // files: uploadedPaths, // <- if you have a column (e.g. jsonb/text[]) for this
-      });
+      const ok = await awardPointsAndLog(question, { files: uploadedPaths });
+      if (!ok) return;
 
-      await supabase.from("zo_banfoo_25_score").insert({
-        team_id: teamId,
-        score: question.points,
-        remarks: `Question ${question.id}`,
-      });
-
-      setGold((prev) => prev + question.points);
       setFiles(undefined);
       setOpenDialog(false);
       setOpenCorrect(true);
@@ -296,41 +407,23 @@ A major flood has been triggered. ${lost} gold bars have been swept away by the 
   const handleTemptation = async () => {
     if (!question || question.type !== "temptation") return;
 
-    await supabase.from("zo_banfoo_25_icebreaker").insert({
-      team_id: teamId,
-      qr: question.id,
-    });
-    toast.success("Congratulations! 🎉");
-
-    await supabase.from("zo_banfoo_25_score").insert({
-      team_id: teamId,
-      score: question.points,
-      remarks: `Question ${question.id}`,
-    });
-
-    setGold((prev) => prev + question.points);
+    // Temptation: no extra fields, just completion + score
+    const ok = await awardPointsAndLog(question);
+    if (ok) {
+      toast.success("Congratulations! 🎉");
+    }
     setOpenDialog(false);
   };
 
-  const processCode = async (rawCode: string) => {
-    if (!rawCode) return toast.error("Missing Code!");
+  const handleTaskComplete = async () => {
+    if (!question || question.qn.type !== "TASK") return;
 
-    console.log("Processing code:", rawCode);
-    const splitCode = rawCode.split("_");
-    if (splitCode[0] !== "zocampbanfoo") {
-      return toast.error("Invalid Code!");
-    }
+    const ok = await awardPointsAndLog(question);
+    if (!ok) return;
 
-    const questionNumber = splitCode[1];
-    const questionRes = await openQuestion(questionNumber);
-
-    console.log(questionRes);
-
-    if (questionRes) {
-      setQuestion(questionRes);
-      setOpenDialog(true);
-      setAnswerInput("");
-    }
+    toast.success("Task completed! 🎉");
+    setOpenDialog(false);
+    setOpenCorrect(true);
   };
 
   const handleSubmit = async (e: FormEvent<HTMLFormElement>) => {
@@ -342,32 +435,24 @@ A major flood has been triggered. ${lost} gold bars have been swept away by the 
 
     let isCorrect = userAnswer.toUpperCase() === correctAnswer.toUpperCase();
     if (question.id === 30) {
+      console.log(correctAnswer, userAnswer);
       isCorrect = userAnswer.includes(correctAnswer);
     }
 
-    if (isCorrect) {
-      toast.success("Correct answer! 🎉");
-      setOpenCorrect(true);
-
-      await supabase.from("zo_banfoo_25_icebreaker").insert({
-        team_id: teamId,
-        qr: question.id,
-      });
-
-      await supabase.from("zo_banfoo_25_score").insert({
-        team_id: teamId,
-        score: question.points,
-        remarks: `Question ${question.id}`,
-      });
-
-      setGold((prev) => prev + question.points);
-    } else {
+    if (!isCorrect) {
       toast.error("Incorrect answer, try again!");
       return;
     }
 
+    toast.success("Correct answer! 🎉");
+
+    const ok = await awardPointsAndLog(question);
+    if (!ok) return;
+
+    setOpenCorrect(true);
     setOpenDialog(false);
   };
+
   return (
     <div className="fullHeight p-8 flex flex-col gap-5">
       <h1 className="text-center font-bold text-2xl">Z+O Camp Ice Breaker</h1>
@@ -375,79 +460,45 @@ A major flood has been triggered. ${lost} gold bars have been swept away by the 
         <div>Team: Group {teamId}</div>
         <div>Gold: {gold}</div>
       </div>
-      {/* <div className="rounded-xl overflow-hidden border h-[50vh]">
-        {showMap ? (
-          <Map />
-        ) : (
-          <div className="h-full w-full animate-pulse bg-muted" />
-        )}
-      </div> */}
 
+      {/* Result dialog */}
       <Dialog open={openCorrect} onOpenChange={setOpenCorrect}>
         <DialogContent showCloseButton={false}>
-          <DialogHeader>
-            <DialogTitle>
-              {question?.type === "temptation"
-                ? "TREASURE FOUND!"
-                : question?.type === "empty"
-                ? "NO TREASURE FOUND!"
-                : question?.type === "virtue"
-                ? "VIRTUOUS ACTS REMINDER"
-                : "CHALLENGE COMPLETED!"}
+          <DialogHeader className="gap-5">
+            <DialogTitle className="text-xl">
+              {getDialogTitle(question, "result")}
             </DialogTitle>
-            <DialogDescription>
-              {question?.type === "temptation"
-                ? ""
-                : question?.type === "empty"
-                ? "Unfortunately, there is no gold bar here. Better luck at the next location!"
-                : question?.type === "virtue"
-                ? `Have you done a virtuous act during camp? Upload a photo of your act to earn gold bars!
-
-Remember: Only genuine acts of virtue count! Show your virtuous hearts now!`
-                : question?.type === "noreward"
-                ? `
-Well done completing the challenge!
-
-But oops... Looks like this treasure chest had a hole in the bottom! The gold bars rolled away long ago! Better luck at the next location!`
-                : `Well done completing the challenge!
-
-              ${question?.points} gold bars added to your treasure chest! Keep up the good work!`}
+            <DialogDescription className="text-base whitespace-pre-line">
+              {getDialogDescription(question, "result")}
             </DialogDescription>
           </DialogHeader>
         </DialogContent>
       </Dialog>
 
+      {/* Main challenge dialog */}
       <Dialog open={openDialog}>
         <DialogContent showCloseButton={false}>
           <DialogHeader>
-            <DialogTitle>
-              {question?.type === "temptation"
-                ? "TREASURE FOUND!"
-                : question?.type === "empty"
-                ? "NO TREASURE FOUND!"
-                : question?.type === "virtue"
-                ? "VIRTUOUS ACTS REMINDER"
-                : "CHALLENGE UNLOCKED!"}
-            </DialogTitle>
-            <DialogDescription>
-              {question?.type === "temptation"
-                ? ""
-                : question?.type === "empty"
-                ? "Unfortunately, there is no gold bar here. Better luck at the next location!"
-                : question?.type === "virtue"
-                ? `Have you done a virtuous act during camp? Upload a photo of your act to earn gold bars!
-
-Remember: Only genuine acts of virtue count! Show your virtuous hearts now!`
-                : "You've discovered a challenge! Complete it!"}
+            <DialogTitle>{getDialogTitle(question, "challenge")}</DialogTitle>
+            <DialogDescription className="whitespace-pre-line">
+              {getDialogDescription(question, "challenge")}
             </DialogDescription>
           </DialogHeader>
+
+          {/* Challenge content */}
           {question?.type === "temptation" ? (
             <div className="space-y-4">
               <p>{question.qn.question}</p>
+
+              {/* ACTION ROW */}
+              <div className="flex flex-row items-center justify-center gap-3">
+                <Button onClick={handleTemptation}>Claim</Button>
+              </div>
             </div>
           ) : question?.qn.type === "INPUT" ? (
             <form onSubmit={handleSubmit} className="space-y-4">
               <p>{question.qn.question}</p>
+
               <div className="grid w-full max-w-sm items-center gap-3">
                 <Label htmlFor="answer">Answer</Label>
                 <Input
@@ -458,11 +509,29 @@ Remember: Only genuine acts of virtue count! Show your virtuous hearts now!`
                   onChange={(e) => setAnswerInput(e.target.value)}
                 />
               </div>
-              <Button type="submit">Submit</Button>
+
+              {/* ACTION ROW */}
+              <div className="flex flex-row items-center justify-center gap-3">
+                <Button type="submit">Submit</Button>
+
+                <DialogClose asChild>
+                  <Button
+                    type="button"
+                    variant="destructive"
+                    onClick={() => {
+                      toast.info("You gave up!");
+                      setOpenDialog(false);
+                    }}
+                  >
+                    I give up
+                  </Button>
+                </DialogClose>
+              </div>
             </form>
           ) : question?.qn.type === "FILE" ? (
-            <form onSubmit={handleFileSubmit} className="space-y-4">
+            <form onSubmit={handleFileSubmit} className="space-y-4 w-full">
               <p>{question.qn.question}</p>
+
               <Dropzone
                 className="whitespace-pre-line w-full"
                 maxFiles={3}
@@ -474,40 +543,56 @@ Remember: Only genuine acts of virtue count! Show your virtuous hearts now!`
                 <DropzoneContent />
               </Dropzone>
 
-              <Button
-                type="submit"
-                disabled={!files || files.length === 0}
-                className="columnn center"
-              >
-                Submit
-              </Button>
+              {/* ACTION ROW */}
+              <div className="flex flex-row items-center justify-center gap-3">
+                <Button type="submit" disabled={!files || files.length === 0}>
+                  Submit
+                </Button>
+
+                <DialogClose asChild>
+                  <Button
+                    type="button"
+                    variant="destructive"
+                    onClick={() => {
+                      toast.info("You gave up!");
+                      setOpenDialog(false);
+                    }}
+                  >
+                    I give up
+                  </Button>
+                </DialogClose>
+              </div>
             </form>
+          ) : question?.qn.type === "TASK" ? (
+            <div className="space-y-4">
+              <p>{question.qn.question}</p>
+
+              {/* ACTION ROW */}
+              <div className="flex flex-row items-center justify-center gap-3">
+                <Button onClick={handleTaskComplete}>Completed</Button>
+
+                <DialogClose asChild>
+                  <Button
+                    type="button"
+                    variant="destructive"
+                    onClick={() => {
+                      toast.info("You gave up!");
+                      setOpenDialog(false);
+                    }}
+                  >
+                    I give up
+                  </Button>
+                </DialogClose>
+              </div>
+            </div>
           ) : null}
-          <DialogFooter className="sm:justify-start">
-            <DialogClose asChild>
-              <Button
-                type="button"
-                variant={
-                  question?.type === "temptation" ? "secondary" : "destructive"
-                }
-                onClick={async () => {
-                  if (question?.type !== "temptation") {
-                    toast.info("You gave up");
-                  } else {
-                    await handleTemptation();
-                  }
-                  setOpenDialog(false);
-                }}
-              >
-                {question?.type === "temptation" ? "Close" : "I give up"}
-              </Button>
-            </DialogClose>
-          </DialogFooter>
         </DialogContent>
       </Dialog>
-      {/* <Button onClick={() => processCode("zocampbanfoo_1")}>
+
+      <Button onClick={() => processCode("zocampbanfoo_13")}>
         Trigger Scan
-      </Button> */}
+      </Button>
+
       <div className="mx-auto aspect-square max-w-3xl border w-full">
         <ScannerComp
           formats={[
