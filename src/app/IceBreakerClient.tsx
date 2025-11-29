@@ -1,6 +1,5 @@
 "use client";
 
-import { useSearchParams } from "next/navigation";
 import { useCallback, useState, FormEvent, useEffect, useRef } from "react";
 import {
   Scanner as ScannerComp,
@@ -135,11 +134,11 @@ ${question.points} gold bars added to your treasure chest! Keep up the good work
 
 // --- Component ---
 
-export default function IcebreakerClient() {
-  const searchParams = useSearchParams();
-  const rawTeamId = Number(searchParams.get("team_id") ?? "1");
-  const teamId = isNaN(rawTeamId) || rawTeamId < 1 ? 1 : rawTeamId;
+type IcebreakerClientProps = {
+  teamId: number;
+};
 
+export default function IcebreakerClient({ teamId }: IcebreakerClientProps) {
   const goldRef = useRef(0);
   const [gold, setGold] = useState(0);
   const [question, setQuestion] = useState<QuestionType>();
@@ -205,23 +204,38 @@ export default function IcebreakerClient() {
     goldRef.current = gold;
   }, [gold]);
 
-  useEffect(() => {
-    const getScore = async () => {
+  const refreshGoldFromDB = useCallback(async () => {
+    try {
       const { data, error } = await supabase
         .from("zo_banfoo_25_score")
-        .select()
+        .select("score")
         .eq("team_id", teamId);
 
       if (error) {
-        return toast.error("Failed to get score");
+        console.error(error);
+        toast.error("Failed to get score");
+        return null;
       }
 
-      const score = data.map((e) => e.score).reduce((a, v) => a + v, 0);
-      setGold(score);
-    };
+      const total = (data ?? []).reduce(
+        (sum, row: { score: number }) => sum + row.score,
+        0
+      );
 
-    getScore();
+      setGold(total);
+      goldRef.current = total; // keep ref in sync
+
+      return total;
+    } catch (err) {
+      console.error(err);
+      toast.error("Failed to refresh score");
+      return null;
+    }
   }, [teamId]);
+
+  useEffect(() => {
+    refreshGoldFromDB();
+  }, [refreshGoldFromDB]);
 
   useEffect(() => {
     const channel = supabase
@@ -248,44 +262,26 @@ export default function IcebreakerClient() {
   const handleStateUpdate = async (newState: any) => {
     console.log("State changed:", newState);
 
-    if (newState.value === "true") {
-      if (newState.key === "naturalDisaster") {
-        const currentGold = goldRef.current;
-        console.log("Current gold at disaster:", currentGold);
+    if (newState.key === "naturalDisaster" && newState.value === "true") {
+      const previousGold = goldRef.current ?? 0;
 
-        const lost = Math.floor(currentGold / 2);
-        if (lost <= 0) {
-          toast.warning("WARNING!", {
-            description:
-              "A major flood has been triggered, but you had no gold to lose.",
-          });
-          return;
-        }
+      const newGold = await refreshGoldFromDB();
+      if (newGold === null) return;
 
-        const { error } = await supabase.from("zo_banfoo_25_score").insert({
-          team_id: teamId,
-          score: -lost,
-          isAdmin: true,
-          remarks: "Natural Disaster",
-        });
+      const lost = Math.max(0, previousGold - newGold);
 
-        if (error) {
-          console.error(error);
-          toast.error("Failed to apply natural disaster.");
-          return;
-        }
+      toast.warning("WARNING!", {
+        description:
+          lost > 0
+            ? `A major flood has been triggered. ${lost} gold bars have been swept away by the flood.`
+            : "A major flood has been triggered, but your team had no gold to lose.",
+        duration: 10000,
+      });
 
-        setGold(currentGold - lost);
-
-        toast.warning(`WARNING!`, {
-          description: `Excessive anger detected!
-
-A major flood has been triggered. ${lost} gold bars have been swept away by the flood.`,
-        });
-      } else {
-        toast.warning(`WARNING!`);
-      }
+      return;
     }
+
+    // other state keys if needed (e.g. freeze)
   };
 
   const openQuestion = async (questionNumber: string) => {
