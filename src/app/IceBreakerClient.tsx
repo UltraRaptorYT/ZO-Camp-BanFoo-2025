@@ -13,7 +13,7 @@ import {
   DialogDescription,
   DialogHeader,
   DialogTitle,
-  DialogFooter,
+  // DialogFooter,
   DialogClose,
 } from "@/components/ui/dialog";
 import supabase from "@/lib/supabase";
@@ -25,6 +25,7 @@ import {
   DropzoneContent,
   DropzoneEmptyState,
 } from "@/components/ui/shadcn-io/dropzone";
+import { cn } from "@/lib/utils";
 
 type FileQuestion = {
   type: "FILE";
@@ -139,6 +140,7 @@ type IcebreakerClientProps = {
 };
 
 export default function IcebreakerClient({ teamId }: IcebreakerClientProps) {
+  const lastSystemEventRef = useRef<Record<string, string>>({});
   const goldRef = useRef(0);
   const [gold, setGold] = useState(0);
   const [question, setQuestion] = useState<QuestionType>();
@@ -146,6 +148,23 @@ export default function IcebreakerClient({ teamId }: IcebreakerClientProps) {
   const [answerInput, setAnswerInput] = useState("");
   const [openCorrect, setOpenCorrect] = useState(false);
   const [files, setFiles] = useState<File[] | undefined>();
+  const [systemKey, setSystemKey] = useState<string | null>(null);
+
+  const [systemOpen, setSystemOpen] = useState(false);
+  const [systemTitle, setSystemTitle] = useState("WARNING!");
+  const [systemDesc, setSystemDesc] = useState("");
+
+  const getSystemDialogClass = (key: string | null) => {
+    console.log(key);
+    switch (key) {
+      case "naturalDisaster":
+        return "bg-red-800/80 text-white";
+      case "worldPeace":
+        return "bg-green-700/80 text-white";
+      default:
+        return "bg-slate-900/80 text-white";
+    }
+  };
 
   const handleDrop = (files: File[]) => {
     console.log(files);
@@ -260,29 +279,95 @@ export default function IcebreakerClient({ teamId }: IcebreakerClientProps) {
   }, []);
 
   const handleStateUpdate = async (newState: any) => {
-    console.log("State changed:", newState);
+    if (!newState?.key) return;
 
-    if (newState.key === "naturalDisaster" && newState.value === "true") {
+    const key = String(newState.key);
+    const value =
+      typeof newState.value === "boolean"
+        ? String(newState.value)
+        : String(newState.value);
+    setSystemKey(key);
+
+    const stamp = String(newState.time_updated ?? "");
+
+    // Simple de-dupe by time_updated (if available)
+    if (stamp && lastSystemEventRef.current[key] === stamp) {
+      return;
+    }
+    if (key === "naturalDisaster" && value === "true") {
+      if (stamp) lastSystemEventRef.current[key] = stamp;
+
       const previousGold = goldRef.current ?? 0;
-
       const newGold = await refreshGoldFromDB();
       if (newGold === null) return;
 
       const lost = Math.max(0, previousGold - newGold);
 
-      toast.warning("WARNING!", {
-        description:
-          lost > 0
-            ? `A major flood has been triggered. ${lost} gold bars have been swept away by the flood.`
-            : "A major flood has been triggered, but your team had no gold to lose.",
-        duration: 10000,
-      });
+      setSystemTitle("WARNING!");
+      setSystemDesc(
+        lost > 0
+          ? `A major flood has been triggered.\n${lost} gold bars have been swept away by the flood.`
+          : "A major flood has been triggered, but your team had no gold to lose."
+      );
 
+      setSystemOpen(true);
       return;
     }
 
-    // other state keys if needed (e.g. freeze)
+    if (key === "worldPeace" && value === "true") {
+      if (stamp) lastSystemEventRef.current[key] = stamp;
+
+      const previousGold = goldRef.current ?? 0;
+      const newGold = await refreshGoldFromDB();
+      if (newGold === null) return;
+
+      const gained = Math.max(0, newGold - previousGold);
+
+      setSystemTitle("INCREDIBLE NEWS!");
+      setSystemDesc(
+        [
+          "All groups' good deeds have reached the camp target!",
+          "",
+          "All gold bars you have already earned are now DOUBLED!",
+          gained > 0 ? `Your team gained +${gained} gold bars.` : "",
+          "",
+          "Thank you for your kindness and contributions.",
+          "The world is better because of you~",
+          "",
+          "Don't forget to keep doing good deeds as you continue your journey!",
+        ]
+          .filter(Boolean)
+          .join("\n")
+      );
+
+      setSystemOpen(true);
+      return;
+    }
+
+    // other state keys if needed
   };
+
+  useEffect(() => {
+    const scoreChannel = supabase
+      .channel(`score-listener-team-${teamId}`)
+      .on(
+        "postgres_changes",
+        {
+          event: "*",
+          schema: "public",
+          table: "zo_banfoo_25_score",
+          filter: `team_id=eq.${teamId}`,
+        },
+        async () => {
+          await refreshGoldFromDB();
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(scoreChannel);
+    };
+  }, [teamId, refreshGoldFromDB]);
 
   const openQuestion = async (questionNumber: string) => {
     try {
@@ -457,6 +542,32 @@ export default function IcebreakerClient({ teamId }: IcebreakerClientProps) {
         <div>Gold: {gold}</div>
       </div>
 
+      {/* System / Global event dialog (highest priority) */}
+      <Dialog open={systemOpen} onOpenChange={setSystemOpen}>
+        <DialogContent
+          showCloseButton={false}
+          className={`z-200 ${getSystemDialogClass(systemKey)}`}
+        >
+          <DialogHeader className="gap-4">
+            <DialogTitle className="text-xl">{systemTitle}</DialogTitle>
+            <DialogDescription className="text-base whitespace-pre-line text-white">
+              {systemDesc}
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="flex justify-center">
+            <Button
+              onClick={() => {
+                setSystemOpen(false);
+                setSystemKey(null);
+              }}
+            >
+              Okay
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+
       {/* Result dialog */}
       <Dialog open={openCorrect} onOpenChange={setOpenCorrect}>
         <DialogContent showCloseButton={false}>
@@ -625,7 +736,7 @@ export default function IcebreakerClient({ teamId }: IcebreakerClientProps) {
           }}
           allowMultiple={false}
           scanDelay={0}
-          paused={openDialog}
+          paused={openDialog || systemOpen}
         />
       </div>
     </div>

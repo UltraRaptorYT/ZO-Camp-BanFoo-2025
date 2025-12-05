@@ -17,10 +17,17 @@ type TeamScore = {
   gold: number;
 };
 
+type TeamRow = {
+  id: number;
+  team_name?: string | null;
+};
+
 type StateRow = {
   key: string;
   value: string | boolean | null;
+  time_updated?: string | null;
 };
+
 
 export default function IcebreakerAdminPage() {
   const [scores, setScores] = useState<TeamScore[]>([]);
@@ -29,19 +36,21 @@ export default function IcebreakerAdminPage() {
   const [isFrozen, setIsFrozen] = useState(false);
   const [loadingFreeze, setLoadingFreeze] = useState(false);
   const [loadingDisaster, setLoadingDisaster] = useState(false);
+  const [loadingWorldPeace, setLoadingWorldPeace] = useState(false);
 
   // --- Helpers ---
-
-  const fetchScores = useCallback(async () => {
+  const handleTriggerWorldPeace = async () => {
     try {
-      setLoadingScores(true);
+      setLoadingWorldPeace(true);
 
+      // 1) Read all score rows
       const { data, error } = await supabase
         .from("zo_banfoo_25_score")
         .select("team_id, score");
 
       if (error) throw error;
 
+      // 2) Sum current gold per team
       const totalsMap = new Map<number, number>();
       (data ?? []).forEach((row: any) => {
         const teamId = row.team_id as number;
@@ -49,8 +58,89 @@ export default function IcebreakerAdminPage() {
         totalsMap.set(teamId, (totalsMap.get(teamId) ?? 0) + score);
       });
 
-      const totals: TeamScore[] = Array.from(totalsMap.entries())
-        .map(([team_id, gold]) => ({ team_id, gold }))
+      // 3) Create "doubling" rows
+      // Add +currentTotal for each team (so total becomes 2x)
+      const worldPeaceRows: any[] = [];
+
+      for (const [team_id, gold] of totalsMap.entries()) {
+        const safeGold = Math.max(0, gold);
+
+        if (safeGold > 0) {
+          worldPeaceRows.push({
+            team_id,
+            score: safeGold,
+            isAdmin: true,
+            remarks: "World Peace",
+          });
+        }
+      }
+
+      if (worldPeaceRows.length > 0) {
+        const { error: insertErr } = await supabase
+          .from("zo_banfoo_25_score")
+          .insert(worldPeaceRows);
+
+        if (insertErr) throw insertErr;
+      }
+
+      // 4) Flip state key to notify clients
+      // Use upsert so it works even if the row doesn't exist yet
+      const { error: stateErr } = await supabase
+        .from("zo_banfoo_25_state")
+        .upsert(
+          {
+            key: "worldPeace",
+            value: "true",
+            time_updated: new Date().toISOString(),
+          },
+          { onConflict: "key" }
+        );
+
+      if (stateErr) throw stateErr;
+
+      toast.success("World Peace triggered. All teams' gold is doubled!");
+
+      fetchScores();
+    } catch (err) {
+      console.error(err);
+      toast.error("Failed to trigger World Peace");
+    } finally {
+      setLoadingWorldPeace(false);
+    }
+  };
+
+  const fetchScores = useCallback(async () => {
+    try {
+      setLoadingScores(true);
+
+      // Fetch teams + scores in parallel
+      const [
+        { data: teamData, error: teamErr },
+        { data: scoreData, error: scoreErr },
+      ] = await Promise.all([
+        supabase.from("zo_banfoo_25_team").select("id, team_name"),
+        supabase.from("zo_banfoo_25_score").select("team_id, score"),
+      ]);
+
+      if (teamErr) throw teamErr;
+      if (scoreErr) throw scoreErr;
+
+      const teams = (teamData ?? []) as TeamRow[];
+
+      // Sum scores
+      const totalsMap = new Map<number, number>();
+      (scoreData ?? []).forEach((row: any) => {
+        const teamId = row.team_id as number;
+        const score = row.score as number;
+        totalsMap.set(teamId, (totalsMap.get(teamId) ?? 0) + score);
+      });
+
+      // Merge: ensure every team shows up, even if no score rows
+      const totals: TeamScore[] = teams
+        .map((t) => ({
+          team_id: t.id,
+          gold: totalsMap.get(t.id) ?? 0,
+        }))
         .sort((a, b) => a.team_id - b.team_id);
 
       setScores(totals);
@@ -71,7 +161,6 @@ export default function IcebreakerAdminPage() {
         .maybeSingle();
 
       if (error && error.code !== "PGRST116") {
-        // ignore "no rows" style error if your table is empty; adjust as needed
         throw error;
       }
 
@@ -80,6 +169,9 @@ export default function IcebreakerAdminPage() {
         const raw = row.value;
         const asString = typeof raw === "boolean" ? String(raw) : String(raw);
         setIsFrozen(asString === "true");
+      } else {
+        // Optional: default if no state row exists
+        setIsFrozen(false);
       }
     } catch (err) {
       console.error(err);
@@ -118,7 +210,7 @@ export default function IcebreakerAdminPage() {
     try {
       setLoadingDisaster(true);
 
-      // 1) Get all scores to compute current gold per team
+      // Fetch all scores to compute current gold per team
       const { data, error } = await supabase
         .from("zo_banfoo_25_score")
         .select("team_id, score");
@@ -132,11 +224,11 @@ export default function IcebreakerAdminPage() {
         totalsMap.set(teamId, (totalsMap.get(teamId) ?? 0) + score);
       });
 
-      // 2) Build deduction rows: lose half (floor) of current gold
+      // Build deduction rows: lose half (floor) of current gold
       const disasterRows: any[] = [];
 
       for (const [team_id, gold] of totalsMap.entries()) {
-        const safeGold = Math.max(0, gold); // in case of negatives
+        const safeGold = Math.max(0, gold);
         const lost = Math.floor(safeGold / 2);
 
         if (lost > 0) {
@@ -157,7 +249,7 @@ export default function IcebreakerAdminPage() {
         if (insertErr) throw insertErr;
       }
 
-      // 3) Flip the naturalDisaster flag to notify clients
+      // Flip the naturalDisaster flag to notify clients
       const { error: stateErr } = await supabase
         .from("zo_banfoo_25_state")
         .update({
@@ -171,6 +263,9 @@ export default function IcebreakerAdminPage() {
       toast.warning(
         "Natural Disaster triggered. All teams have lost half their gold!"
       );
+
+      // Refresh admin totals
+      fetchScores();
     } catch (err) {
       console.error(err);
       toast.error("Failed to trigger natural disaster");
@@ -195,7 +290,22 @@ export default function IcebreakerAdminPage() {
           table: "zo_banfoo_25_score",
         },
         () => {
-          // Just re-fetch on any score change for simplicity
+          fetchScores();
+        }
+      )
+      .subscribe();
+
+    // Also listen for team changes so new teams appear immediately
+    const teamChannel = supabase
+      .channel("admin-team-listener")
+      .on(
+        "postgres_changes",
+        {
+          event: "*",
+          schema: "public",
+          table: "zo_banfoo_25_team",
+        },
+        () => {
           fetchScores();
         }
       )
@@ -224,6 +334,7 @@ export default function IcebreakerAdminPage() {
 
     return () => {
       supabase.removeChannel(scoreChannel);
+      supabase.removeChannel(teamChannel);
       supabase.removeChannel(stateChannel);
     };
   }, [fetchScores, fetchFreezeState]);
@@ -256,27 +367,28 @@ export default function IcebreakerAdminPage() {
           <CardHeader>
             <CardTitle>Team Gold Overview</CardTitle>
             <CardDescription>
-              Live gold totals for each team (based on zo_banfoo_25_score).
+              Live gold totals for each team (teams from zo_banfoo_25_team).
             </CardDescription>
           </CardHeader>
           <CardContent>
             {scores.length === 0 ? (
               <p className="text-sm text-muted-foreground">
-                No scores yet. Start the game to see teams appear here.
+                No teams found yet in <code>zo_banfoo_25_team</code>.
               </p>
             ) : (
-              <div className="space-y-2">
+              <div className="divide-y rounded-md border">
+                {/* Simplified layout (removes the old per-row "points style" look) */}
+                <div className="flex items-center justify-between px-3 py-2 text-xs text-muted-foreground">
+                  <span>Group</span>
+                  <span>Gold</span>
+                </div>
                 {scores.map((team) => (
                   <div
                     key={team.team_id}
-                    className="flex items-center justify-between rounded-md border px-3 py-2 text-sm"
+                    className="flex items-center justify-between px-3 py-2 text-sm"
                   >
-                    <span className="font-medium">
-                      Group {team.team_id.toString().padStart(2, "0")}
-                    </span>
-                    <span className="font-semibold">
-                      {team.gold} gold bar{team.gold === 1 ? "" : "s"}
-                    </span>
+                    <span className="font-medium">Group {team.team_id}</span>
+                    <span className="font-semibold">{team.gold}</span>
                   </div>
                 ))}
               </div>
@@ -335,6 +447,27 @@ export default function IcebreakerAdminPage() {
                 {loadingDisaster
                   ? "Triggering disaster…"
                   : "Trigger Natural Disaster"}
+              </Button>
+            </div>
+
+            <div className="space-y-2 pt-2 border-t">
+              <p className="text-sm font-medium text-emerald-600">
+                Trigger World Peace (Double Gold)
+              </p>
+              <p className="text-xs text-muted-foreground">
+                Sets <code>worldPeace</code> to <code>true</code> in{" "}
+                <code>zo_banfoo_25_state</code>. All teams&apos; current gold
+                will be doubled by inserting an admin score equal to their
+                current total.
+              </p>
+              <Button
+                className="w-full"
+                onClick={handleTriggerWorldPeace}
+                disabled={loadingWorldPeace}
+              >
+                {loadingWorldPeace
+                  ? "Triggering world peace…"
+                  : "Trigger World Peace"}
               </Button>
             </div>
           </CardContent>
