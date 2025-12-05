@@ -37,8 +37,109 @@ export default function IcebreakerAdminPage() {
   const [loadingDisaster, setLoadingDisaster] = useState(false);
   const [loadingWorldPeace, setLoadingWorldPeace] = useState(false);
   const [loadingAid, setLoadingAid] = useState(false);
+  const [loadingThief, setLoadingThief] = useState(false);
 
+  const upsertState = useCallback(async (key: string, value: string) => {
+    const { error } = await supabase.from("zo_banfoo_25_state").upsert(
+      {
+        key,
+        value,
+        time_updated: new Date().toISOString(),
+      },
+      { onConflict: "key" }
+    );
+
+    if (error) throw error;
+  }, []);
+
+  const pulseState = useCallback(
+    async (key: string, delayMs: number) => {
+      await upsertState(key, "true");
+
+      // fire-and-forget reset
+      setTimeout(() => {
+        upsertState(key, "false").catch((err) =>
+          console.warn(`Failed to reset ${key}:`, err)
+        );
+      }, delayMs);
+    },
+    [upsertState]
+  );
   // --- Helpers ---
+  const handleTriggerThief = async () => {
+    try {
+      setLoadingThief(true);
+
+      // Pull teams + scores
+      const [
+        { data: teamData, error: teamErr },
+        { data: scoreData, error: scoreErr },
+      ] = await Promise.all([
+        supabase.from("zo_banfoo_25_team").select("id, team_name"),
+        supabase.from("zo_banfoo_25_score").select("team_id, score"),
+      ]);
+
+      if (teamErr) throw teamErr;
+      if (scoreErr) throw scoreErr;
+
+      const teams = (teamData ?? []) as {
+        id: number;
+        team_name?: string | null;
+      }[];
+
+      const totalsMap = new Map<number, number>();
+      (scoreData ?? []).forEach((row: any) => {
+        const teamId = row.team_id as number;
+        const score = row.score as number;
+        totalsMap.set(teamId, (totalsMap.get(teamId) ?? 0) + score);
+      });
+
+      const totals = teams.map((t) => ({
+        team_id: t.id,
+        gold: totalsMap.get(t.id) ?? 0,
+      }));
+
+      // Find leader
+      const leader = totals.reduce(
+        (best, cur) => (cur.gold > best.gold ? cur : best),
+        { team_id: totals[0]?.team_id ?? 0, gold: totals[0]?.gold ?? 0 }
+      );
+
+      const payload = {
+        leader_team_id: leader.team_id,
+        leader_gold: leader.gold,
+      };
+
+      // OPTIONAL: reset previous thief decisions (if you want re-runnable events)
+      // Remove this block if the event only runs once.
+      const { error: resetErr } = await supabase
+        .from("zo_banfoo_25_thief_decisions")
+        .delete()
+        .neq("team_id", -1);
+
+      if (resetErr) {
+        console.warn("Could not reset thief decisions:", resetErr);
+      }
+
+      // Trigger state
+      // store payload first
+      await upsertState("thief", JSON.stringify(payload));
+
+      // then auto-reset the same key later
+      setTimeout(() => {
+        upsertState("thief", "false").catch((err) =>
+          console.warn("Failed to reset thief:", err)
+        );
+      }, 120000);
+
+      toast.success("Thief event triggered.");
+    } catch (err) {
+      console.error(err);
+      toast.error("Failed to trigger Thief event");
+    } finally {
+      setLoadingThief(false);
+    }
+  };
 
   const handleTriggerDisasterAid = async () => {
     try {
@@ -57,18 +158,7 @@ export default function IcebreakerAdminPage() {
       }
 
       // Trigger state (use upsert so it works even if row doesn't exist)
-      const { error: stateErr } = await supabase
-        .from("zo_banfoo_25_state")
-        .upsert(
-          {
-            key: "disasterAid",
-            value: "true",
-            time_updated: new Date().toISOString(),
-          },
-          { onConflict: "key" }
-        );
-
-      if (stateErr) throw stateErr;
+      await pulseState("disasterAid", 120000); // 2 minutes
 
       toast.success("Disaster Aid triggered. Teams may now Donate or Pass.");
     } catch (err) {
@@ -125,18 +215,7 @@ export default function IcebreakerAdminPage() {
 
       // 4) Flip state key to notify clients
       // Use upsert so it works even if the row doesn't exist yet
-      const { error: stateErr } = await supabase
-        .from("zo_banfoo_25_state")
-        .upsert(
-          {
-            key: "worldPeace",
-            value: "true",
-            time_updated: new Date().toISOString(),
-          },
-          { onConflict: "key" }
-        );
-
-      if (stateErr) throw stateErr;
+      await pulseState("worldPeace", 1500);
 
       toast.success("World Peace triggered. All teams' gold is doubled!");
 
@@ -290,15 +369,7 @@ export default function IcebreakerAdminPage() {
       }
 
       // Flip the naturalDisaster flag to notify clients
-      const { error: stateErr } = await supabase
-        .from("zo_banfoo_25_state")
-        .update({
-          value: "true",
-          time_updated: new Date().toISOString(),
-        })
-        .eq("key", "naturalDisaster");
-
-      if (stateErr) throw stateErr;
+      await pulseState("naturalDisaster", 1500);
 
       toast.warning(
         "Natural Disaster triggered. All teams have lost half their gold!"
@@ -509,6 +580,21 @@ export default function IcebreakerAdminPage() {
                 {loadingAid
                   ? "Triggering disaster aid…"
                   : "Trigger Disaster Aid"}
+              </Button>
+            </div>
+            <div className="space-y-2 pt-2 border-t">
+              <p className="text-sm font-medium text-blue-600">
+                Trigger Thief (Steal / Pass)
+              </p>
+              <Button
+                variant="outline"
+                onClick={handleTriggerThief}
+                disabled={loadingThief}
+                className="w-full"
+              >
+                {loadingThief
+                  ? "Triggering thief event…"
+                  : "Trigger Thief Event"}
               </Button>
             </div>
           </CardContent>

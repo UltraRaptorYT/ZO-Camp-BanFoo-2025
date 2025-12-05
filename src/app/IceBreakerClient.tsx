@@ -25,7 +25,6 @@ import {
   DropzoneContent,
   DropzoneEmptyState,
 } from "@/components/ui/shadcn-io/dropzone";
-import { cn } from "@/lib/utils";
 
 type FileQuestion = {
   type: "FILE";
@@ -156,6 +155,10 @@ export default function IcebreakerClient({ teamId }: IcebreakerClientProps) {
 
   const [aidOpen, setAidOpen] = useState(false);
   const [aidLoading, setAidLoading] = useState(false);
+  const [thiefOpen, setThiefOpen] = useState(false);
+  const [thiefLoading, setThiefLoading] = useState(false);
+  const [leaderGold, setLeaderGold] = useState<number | null>(null);
+  const [leaderTeamId, setLeaderTeamId] = useState<number | null>(null);
 
   const getSystemDialogClass = (key: string | null) => {
     console.log(key);
@@ -166,8 +169,118 @@ export default function IcebreakerClient({ teamId }: IcebreakerClientProps) {
         return "bg-green-700/80 text-white";
       case "disasterAid":
         return "bg-amber-700/90 text-white";
+      case "thief":
+        return "bg-blue-700/90 text-white";
       default:
         return "bg-slate-900/80 text-white";
+    }
+  };
+  const hasThiefDecision = useCallback(async () => {
+    const { data, error } = await supabase
+      .from("zo_banfoo_25_thief_decisions")
+      .select("team_id")
+      .eq("team_id", teamId)
+      .maybeSingle();
+
+    // If table doesn't exist yet, just ignore gating
+    if (error) return false;
+
+    return !!data;
+  }, [teamId]);
+
+  const handleThiefPass = async () => {
+    try {
+      setThiefLoading(true);
+
+      // lock decision (if table exists)
+      await supabase
+        .from("zo_banfoo_25_thief_decisions")
+        .upsert(
+          { team_id: teamId, decision: "PASS" },
+          { onConflict: "team_id" }
+        );
+
+      const { error: scoreErr } = await supabase
+        .from("zo_banfoo_25_score")
+        .insert({
+          team_id: teamId,
+          score: 20,
+          isAdmin: true,
+          remarks: "Thief - Integrity Rewarded",
+        });
+
+      if (scoreErr) throw scoreErr;
+
+      setThiefOpen(false);
+
+      setSystemKey("thief");
+      setSystemTitle("INTEGRITY REWARDED!");
+      setSystemDesc(
+        [
+          "Your group chose the honourable path!",
+          "",
+          "The treasure guardians are impressed by your sportsmanship:",
+          "20 gold bars added to your treasure chest!",
+          "",
+          "You've proven that good character is the greatest treasure!",
+          "Keep playing fair and strong!",
+        ].join("\n")
+      );
+      setSystemOpen(true);
+
+      await refreshGoldFromDB();
+    } catch (err) {
+      console.error(err);
+      toast.error("Failed to submit choice.");
+    } finally {
+      setThiefLoading(false);
+    }
+  };
+
+  const handleThiefSteal = async () => {
+    try {
+      setThiefLoading(true);
+
+      await supabase
+        .from("zo_banfoo_25_thief_decisions")
+        .upsert(
+          { team_id: teamId, decision: "STEAL" },
+          { onConflict: "team_id" }
+        );
+
+      const { error: scoreErr } = await supabase
+        .from("zo_banfoo_25_score")
+        .insert({
+          team_id: teamId,
+          score: -50,
+          isAdmin: true,
+          remarks: "Thief - Karma Strikes",
+        });
+
+      if (scoreErr) throw scoreErr;
+
+      setThiefOpen(false);
+
+      setSystemKey("thief");
+      setSystemTitle("KARMA STRIKES!");
+      setSystemDesc(
+        [
+          "The treasure guardians saw your attempt to steal!",
+          "",
+          "Jealousy and dishonesty have consequences:",
+          "50 gold bars deducted from your treasure chest!",
+          "",
+          "Remember: True treasure hunters win with honour, not theft!",
+        ].join("\n")
+      );
+      setSystemOpen(true);
+
+      await refreshGoldFromDB();
+    } catch (err) {
+      console.error(err);
+      toast.error("Failed to submit choice.");
+    } finally {
+      setThiefLoading(false);
     }
   };
 
@@ -518,6 +631,36 @@ export default function IcebreakerClient({ teamId }: IcebreakerClientProps) {
       return;
     }
 
+    if (key === "thief") {
+      // value is JSON string set by admin
+      let parsed: any = null;
+      try {
+        parsed =
+          typeof newState.value === "string"
+            ? JSON.parse(newState.value)
+            : newState.value;
+      } catch {
+        parsed = null;
+      }
+
+      const already = await hasThiefDecision();
+      if (already) return;
+
+      setLeaderGold(parsed?.leader_gold ?? null);
+      setLeaderTeamId(parsed?.leader_team_id ?? null);
+
+      setSystemKey("thief");
+      setSystemTitle("CURRENT STATUS UPDATE");
+      setSystemDesc(
+        `The leading group currently has ${
+          parsed?.leader_gold ?? "?"
+        } gold bars and is ahead of everyone else!\n\nDo you want to steal their gold bars to stop them from leading?`
+      );
+
+      setThiefOpen(true);
+      return;
+    }
+
     // other state keys if needed
   };
 
@@ -737,6 +880,39 @@ export default function IcebreakerClient({ teamId }: IcebreakerClientProps) {
               }}
             >
               Okay
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+      {/* Thief choice dialog */}
+      <Dialog open={thiefOpen} onOpenChange={setThiefOpen}>
+        <DialogContent
+          showCloseButton={false}
+          className={`z-200 ${getSystemDialogClass("thief")}`}
+        >
+          <DialogHeader className="gap-4">
+            <DialogTitle className="text-xl">CURRENT STATUS UPDATE</DialogTitle>
+            <DialogDescription className="text-base whitespace-pre-line text-white">
+              {`The leading group currently has ${
+                leaderGold ?? "?"
+              } gold bars and is ahead of everyone else!\n\nDo you want to steal their gold bars to stop them from leading?`}
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="flex justify-center gap-3">
+            <Button
+              variant="secondary"
+              onClick={handleThiefPass}
+              disabled={thiefLoading}
+            >
+              {thiefLoading ? "Submitting…" : "Pass"}
+            </Button>
+            <Button
+              variant="destructive"
+              onClick={handleThiefSteal}
+              disabled={thiefLoading}
+            >
+              {thiefLoading ? "Submitting…" : "Steal"}
             </Button>
           </div>
         </DialogContent>
