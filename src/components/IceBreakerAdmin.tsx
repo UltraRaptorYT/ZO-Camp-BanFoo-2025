@@ -28,7 +28,6 @@ type StateRow = {
   time_updated?: string | null;
 };
 
-
 export default function IcebreakerAdminPage() {
   const [scores, setScores] = useState<TeamScore[]>([]);
   const [loadingScores, setLoadingScores] = useState(false);
@@ -37,8 +36,49 @@ export default function IcebreakerAdminPage() {
   const [loadingFreeze, setLoadingFreeze] = useState(false);
   const [loadingDisaster, setLoadingDisaster] = useState(false);
   const [loadingWorldPeace, setLoadingWorldPeace] = useState(false);
+  const [loadingAid, setLoadingAid] = useState(false);
 
   // --- Helpers ---
+
+  const handleTriggerDisasterAid = async () => {
+    try {
+      setLoadingAid(true);
+
+      // OPTIONAL: reset previous choices so this event is clean
+      // Remove this block if you never need to re-run the event.
+      const { error: resetErr } = await supabase
+        .from("zo_banfoo_25_disaster_aid")
+        .delete()
+        .neq("team_id", -1); // harmless way to target all rows
+
+      if (resetErr) {
+        console.warn("Could not reset disaster aid decisions:", resetErr);
+        // not fatal; continue
+      }
+
+      // Trigger state (use upsert so it works even if row doesn't exist)
+      const { error: stateErr } = await supabase
+        .from("zo_banfoo_25_state")
+        .upsert(
+          {
+            key: "disasterAid",
+            value: "true",
+            time_updated: new Date().toISOString(),
+          },
+          { onConflict: "key" }
+        );
+
+      if (stateErr) throw stateErr;
+
+      toast.success("Disaster Aid triggered. Teams may now Donate or Pass.");
+    } catch (err) {
+      console.error(err);
+      toast.error("Failed to trigger Disaster Aid");
+    } finally {
+      setLoadingAid(false);
+    }
+  };
+
   const handleTriggerWorldPeace = async () => {
     try {
       setLoadingWorldPeace(true);
@@ -363,7 +403,7 @@ export default function IcebreakerAdminPage() {
 
       <div className="grid gap-6 md:grid-cols-3">
         {/* Scoreboard summary */}
-        <Card className="md:col-span-2">
+        <Card>
           <CardHeader>
             <CardTitle>Team Gold Overview</CardTitle>
             <CardDescription>
@@ -397,22 +437,14 @@ export default function IcebreakerAdminPage() {
         </Card>
 
         {/* Controls */}
-        <Card>
+        <Card className="md:col-span-2">
           <CardHeader>
             <CardTitle>Game Controls</CardTitle>
-            <CardDescription>
-              Triggers that your player devices & scoreboard listen to.
-            </CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
             <div className="space-y-2">
               <p className="text-sm font-medium">
                 Freeze / Unfreeze Challenges
-              </p>
-              <p className="text-xs text-muted-foreground">
-                Toggles the global <code>freeze</code> state in{" "}
-                <code>zo_banfoo_25_state</code>. Use this to pause scoring or
-                scanning.
               </p>
               <Button
                 variant={isFrozen ? "outline" : "default"}
@@ -432,12 +464,6 @@ export default function IcebreakerAdminPage() {
               <p className="text-sm font-medium text-destructive">
                 Trigger Natural Disaster (Steal Gold)
               </p>
-              <p className="text-xs text-muted-foreground">
-                Sets <code>naturalDisaster</code> to <code>true</code> in{" "}
-                <code>zo_banfoo_25_state</code>. Every team&apos;s client will
-                run the flood logic and lose half of their current gold, showing
-                the &quot;steal&quot; animation / toast.
-              </p>
               <Button
                 variant="destructive"
                 onClick={handleTriggerNaturalDisaster}
@@ -454,12 +480,6 @@ export default function IcebreakerAdminPage() {
               <p className="text-sm font-medium text-emerald-600">
                 Trigger World Peace (Double Gold)
               </p>
-              <p className="text-xs text-muted-foreground">
-                Sets <code>worldPeace</code> to <code>true</code> in{" "}
-                <code>zo_banfoo_25_state</code>. All teams&apos; current gold
-                will be doubled by inserting an admin score equal to their
-                current total.
-              </p>
               <Button
                 className="w-full"
                 onClick={handleTriggerWorldPeace}
@@ -468,6 +488,27 @@ export default function IcebreakerAdminPage() {
                 {loadingWorldPeace
                   ? "Triggering world peace…"
                   : "Trigger World Peace"}
+              </Button>
+            </div>
+
+            <div className="space-y-2 pt-2 border-t">
+              <p className="text-sm font-medium text-amber-600">
+                Trigger Disaster Aid (Donate / Pass)
+              </p>
+              <p className="text-xs text-muted-foreground">
+                Sets <code>disasterAid</code> to <code>true</code> in{" "}
+                <code>zo_banfoo_25_state</code>. Teams will be prompted to
+                donate 10 gold or pass.
+              </p>
+              <Button
+                variant="outline"
+                onClick={handleTriggerDisasterAid}
+                disabled={loadingAid}
+                className="w-full"
+              >
+                {loadingAid
+                  ? "Triggering disaster aid…"
+                  : "Trigger Disaster Aid"}
               </Button>
             </div>
           </CardContent>

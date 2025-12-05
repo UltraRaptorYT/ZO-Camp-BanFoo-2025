@@ -154,6 +154,9 @@ export default function IcebreakerClient({ teamId }: IcebreakerClientProps) {
   const [systemTitle, setSystemTitle] = useState("WARNING!");
   const [systemDesc, setSystemDesc] = useState("");
 
+  const [aidOpen, setAidOpen] = useState(false);
+  const [aidLoading, setAidLoading] = useState(false);
+
   const getSystemDialogClass = (key: string | null) => {
     console.log(key);
     switch (key) {
@@ -161,8 +164,161 @@ export default function IcebreakerClient({ teamId }: IcebreakerClientProps) {
         return "bg-red-800/80 text-white";
       case "worldPeace":
         return "bg-green-700/80 text-white";
+      case "disasterAid":
+        return "bg-amber-700/90 text-white";
       default:
         return "bg-slate-900/80 text-white";
+    }
+  };
+
+  const handleAidDonate = async () => {
+    try {
+      setAidLoading(true);
+
+      // Ensure local gold is up to date
+      const currentGold = await refreshGoldFromDB();
+      if (currentGold === null) return;
+
+      if (currentGold < 10) {
+        toast.error("Your team does not have enough gold to donate 10.");
+        return;
+      }
+
+      // 1) Record decision first
+      const { error: decisionErr } = await supabase
+        .from("zo_banfoo_25_disaster_aid")
+        .upsert({
+          team_id: teamId,
+          donated: true,
+          updated_at: new Date().toISOString(),
+        });
+
+      if (decisionErr) throw decisionErr;
+
+      // 2) Deduct 10
+      const { error: deductErr } = await supabase
+        .from("zo_banfoo_25_score")
+        .insert({
+          team_id: teamId,
+          score: -10,
+          isAdmin: true,
+          remarks: "Disaster Aid - Donation",
+        });
+
+      if (deductErr) throw deductErr;
+
+      // 3) Check if ALL teams donated
+      const [
+        { data: teamsData, error: teamErr },
+        { data: aidData, error: aidErr },
+      ] = await Promise.all([
+        supabase.from("zo_banfoo_25_team").select("id"),
+        supabase.from("zo_banfoo_25_disaster_aid").select("team_id, donated"),
+      ]);
+
+      if (teamErr) throw teamErr;
+      if (aidErr) throw aidErr;
+
+      const totalTeams = (teamsData ?? []).length;
+      const donatedTeams = new Set(
+        (aidData ?? []).filter((r: any) => r.donated).map((r: any) => r.team_id)
+      );
+
+      const allDonated = totalTeams > 0 && donatedTeams.size === totalTeams;
+
+      // 4) Reward this team now
+      const reward = allDonated ? 40 : 20;
+
+      const { error: rewardErr } = await supabase
+        .from("zo_banfoo_25_score")
+        .insert({
+          team_id: teamId,
+          score: reward,
+          isAdmin: true,
+          remarks: allDonated
+            ? "Disaster Aid - Miracle of Unity"
+            : "Disaster Aid - Compassion Rewarded",
+        });
+
+      if (rewardErr) throw rewardErr;
+
+      setAidOpen(false);
+
+      // 5) Nice message
+      setSystemKey("disasterAid");
+      if (allDonated) {
+        setSystemTitle("MIRACLE OF UNITY!");
+        setSystemDesc(
+          [
+            "INCREDIBLE! Every single group chose to donate and help!",
+            "",
+            "SPECIAL BLESSING ACTIVATED:",
+            "10 gold bars donated.",
+            "40 gold bars added to your treasure chest!",
+            "",
+            "When everyone comes together to help, beautiful things happens!",
+          ].join("\n")
+        );
+      } else {
+        setSystemTitle("COMPASSION REWARDED!");
+        setSystemDesc(
+          [
+            "Your generous hearts have touched the treasure guardians!",
+            "",
+            "Your selfless donation has been blessed:",
+            "10 gold bars donated.",
+            "20 gold bars added to your treasure chest!",
+            "",
+            "Kindness truly pays! Keep up the amazing spirit!",
+          ].join("\n")
+        );
+      }
+
+      setSystemOpen(true);
+
+      // 6) Ensure UI gold is correct
+      await refreshGoldFromDB();
+    } catch (err) {
+      console.error(err);
+      toast.error("Failed to process donation.");
+    } finally {
+      setAidLoading(false);
+    }
+  };
+
+  const handleAidPass = async () => {
+    try {
+      setAidLoading(true);
+
+      // record decision
+      const { error } = await supabase
+        .from("zo_banfoo_25_disaster_aid")
+        .upsert({
+          team_id: teamId,
+          donated: false,
+          updated_at: new Date().toISOString(),
+        });
+
+      if (error) throw error;
+
+      setAidOpen(false);
+
+      setSystemKey("disasterAid");
+      setSystemTitle("CHOICE RESPECTED");
+      setSystemDesc(
+        [
+          "Your group has chosen to pass on this opportunity.",
+          "No gold bars have been deducted from your treasure chest.",
+          "",
+          "Continue your treasure hunting journey!",
+        ].join("\n")
+      );
+      setSystemOpen(true);
+    } catch (err) {
+      console.error(err);
+      toast.error("Failed to submit decision.");
+    } finally {
+      setAidLoading(false);
     }
   };
 
@@ -341,6 +497,24 @@ export default function IcebreakerClient({ teamId }: IcebreakerClientProps) {
       );
 
       setSystemOpen(true);
+      return;
+    }
+
+    if (key === "disasterAid" && value === "true") {
+      if (stamp) lastSystemEventRef.current[key] = stamp;
+
+      setSystemKey("disasterAid");
+      setSystemTitle("BREAKING NEWS!");
+      setSystemDesc(
+        [
+          "A 9.5 magnitude earthquake struck a neighbouring country, severely affecting many lives.",
+          "",
+          "Are you willing to donate 10 gold bars from your treasure chest to help those in need?",
+        ].join("\n")
+      );
+
+      // open a choice dialog instead of the normal system one
+      setAidOpen(true);
       return;
     }
 
@@ -563,6 +737,38 @@ export default function IcebreakerClient({ teamId }: IcebreakerClientProps) {
               }}
             >
               Okay
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Disaster Aid choice dialog */}
+      <Dialog open={aidOpen} onOpenChange={setAidOpen}>
+        <DialogContent
+          showCloseButton={false}
+          className={`z-200 ${getSystemDialogClass("disasterAid")}`}
+        >
+          <DialogHeader className="gap-4">
+            <DialogTitle className="text-xl">BREAKING NEWS!</DialogTitle>
+            <DialogDescription className="text-base whitespace-pre-line text-white">
+              {[
+                "A 9.5 magnitude earthquake struck a neighbouring country, severely affecting many lives.",
+                "",
+                "Are you willing to donate 10 gold bars from your treasure chest to help those in need?",
+              ].join("\n")}
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="flex justify-center gap-3">
+            <Button
+              variant="secondary"
+              onClick={handleAidPass}
+              disabled={aidLoading}
+            >
+              {aidLoading ? "Submitting…" : "Pass"}
+            </Button>
+            <Button onClick={handleAidDonate} disabled={aidLoading}>
+              {aidLoading ? "Processing…" : "Donate 10"}
             </Button>
           </div>
         </DialogContent>
