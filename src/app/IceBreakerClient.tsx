@@ -1077,10 +1077,10 @@ export default function IcebreakerClient({ teamId }: IcebreakerClientProps) {
           ) : null}
         </DialogContent>
       </Dialog>
-
+      {/*
       <Button onClick={() => processCode("zocampbanfoo_13")}>
         Trigger Scan
-      </Button>
+      </Button> */}
 
       <div className="mx-auto aspect-square max-w-3xl border w-full">
         <ScannerComp
